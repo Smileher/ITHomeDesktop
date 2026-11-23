@@ -17,6 +17,9 @@ pnpm test
 cargo test --locked --manifest-path src-tauri/Cargo.toml
 # 保持开发服务运行，再执行真实匿名接口与受控响应交互测试：
 pnpm test:e2e
+pnpm test:site
+# 原生程序已构建且没有登录真实账号时，可执行原生 IPC 与窗口隔离检查：
+pnpm test:native
 ```
 
 ## 数据与登录
@@ -64,4 +67,4 @@ Pages 使用 Actions 构建并发布中英文官网和隐私页。网站从 Rele
 pnpm site:build
 ```
 
-网站图片来自真实匿名阅读测试的界面截图；更新界面后重新检查截图。新增业务功能前更新 FEATURES.md，保持实现与宣传一致。
+网站图片来自真实匿名阅读测试的界面截图；更新界面后重新检查截图。常规测试只写入忽略的 test-results，设置 ITHOME_CAPTURE_SITE=1 才从浏览器测试更新网站截图。新增业务功能前更新 FEATURES.md，保持实现与宣传一致。

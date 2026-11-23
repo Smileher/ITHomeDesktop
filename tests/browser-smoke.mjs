@@ -32,7 +32,7 @@ try {
   await fs.mkdir("test-results", { recursive: true });
   await fs.mkdir("site/assets", { recursive: true });
   await page.screenshot({ path: "test-results/live-desktop.png" });
-  await page.screenshot({ path: "site/assets/desktop.png" });
+  if (process.env.ITHOME_CAPTURE_SITE === "1") await page.screenshot({ path: "site/assets/desktop.png" });
   await page.setViewportSize({ width: 375, height: 860 });
   await page.getByRole("button", { name: "返回列表", exact: true }).click();
   const navigation = await page.locator(".sidebar").boundingBox();
@@ -49,7 +49,7 @@ try {
     "Floating navigation needs outer breathing room",
   );
   await page.screenshot({ path: "test-results/live-mobile-feed.png" });
-  await page.screenshot({ path: "site/assets/mobile.png" });
+  if (process.env.ITHOME_CAPTURE_SITE === "1") await page.screenshot({ path: "site/assets/mobile.png" });
   await page.locator(".news-row").first().click();
   await page.locator(".reader>h1").waitFor();
   assert.equal(await page.locator(".feed-pane").isVisible(), false);
