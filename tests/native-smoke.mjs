@@ -81,6 +81,9 @@ try {
     refresh: true,
   });
   assert.ok(news.data.length > 0);
+  const deals = await call("get_deals", { refresh: true });
+  assert.ok(deals.data.length > 0);
+  report.checks.push("native public deals feed");
   id = news.data[0].id;
   const article = await call("get_article", { id, refresh: true });
   assert.equal(article.data.item.id, id);

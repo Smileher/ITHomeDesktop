@@ -39,12 +39,36 @@ export function mergeComments(
   for (const comment of incoming) values.set(comment.id, comment);
   return [...values.values()];
 }
+export function enrichCommentSources<T>(web: T, app: unknown): T {
+  const sources = new Map<number, Record<string, unknown>>();
+  function walk(value: unknown, apply: boolean) {
+    if (Array.isArray(value)) {
+      value.forEach((item) => walk(item, apply));
+    } else if (value && typeof value === "object") {
+      const object = value as Record<string, unknown>;
+      if (typeof object.id === "number") {
+        if (apply) {
+          const source = sources.get(object.id);
+          if (source)
+            for (const key of ["deviceTailModel", "tail", "tailClient", "pictures"])
+              if (key in source) object[key] = source[key];
+        } else sources.set(object.id, object);
+      }
+      for (const key of ["comments", "hotComments", "topComments", "children", "comment"])
+        if (object[key]) walk(object[key], apply);
+    }
+  }
+  walk(app, false);
+  walk(web, true);
+  return web;
+}
 export function errorText(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (error && typeof error === "object" && "message" in error)
     return String(error.message);
   return typeof error === "string" ? error : "操作未完成，请重试";
 }
+
 export function displayDate(raw: string, full = false): string {
   if (!raw) return "";
   const value = /(?:Z|[+-]\d{2}:?\d{2})$/.test(raw) ? raw : raw + "+08:00";

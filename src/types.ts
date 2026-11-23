@@ -69,7 +69,15 @@ export interface OfficialComment {
   voteStatus?: number;
   checkStatus?: number;
   aiHint?: string;
-  deviceTailModel?: unknown;
+  deviceTailModel?: DeviceTail | string | null;
+  tail?: string | null;
+  pictures?: { src: string; originSrc?: string }[];
+}
+export interface DeviceTail {
+  name?: string | null;
+  color?: string | null;
+  darkColor?: string | null;
+  extraTails?: DeviceTail[];
 }
 export interface CommentsPage {
   newsId: number;

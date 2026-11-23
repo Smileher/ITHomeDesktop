@@ -7,7 +7,8 @@ import {
 } from "@fluentui/react-icons";
 import { backend } from "../bridge";
 import { displayDate, errorText, mergeComments } from "../domain";
-import type { Article, CommentsPage, OfficialComment, Profile } from "../types";
+import type { Article, CommentsPage, DeviceTail, OfficialComment, Profile } from "../types";
+import type { CSSProperties } from "react";
 import CachedImage from "./CachedImage";
 import officialEmojis from "../emoji.json";
 
@@ -37,6 +38,27 @@ export function CommentText({ value }: { value: string }) {
           <span key={index}>{part}</span>
         );
       })}
+    </>
+  );
+}
+function DeviceSource({ value }: { value: DeviceTail | string }) {
+  if (typeof value === "string") return <span>{value}</span>;
+  const color = (input?: string | null) =>
+    input && /^#[0-9a-f]{3,8}$/i.test(input) ? input : undefined;
+  return (
+    <>
+      {value.name && (
+        <span
+          className="device-source-name"
+          style={{
+            "--source-color": color(value.color),
+            "--source-dark-color": color(value.darkColor),
+          } as CSSProperties}
+        >{value.name}</span>
+      )}
+      {value.extraTails?.map((extra, index) =>
+        extra.name ? <span key={index}> · <DeviceSource value={extra} /></span> : null,
+      )}
     </>
   );
 }
@@ -157,10 +179,22 @@ function Thread({
             ),
           )}
         </div>
-        {typeof comment.deviceTailModel === "string" &&
-          comment.deviceTailModel && (
-            <div className="muted tiny">{comment.deviceTailModel}</div>
-          )}
+        {comment.pictures?.filter((picture) =>
+          picture.src && !comment.elements?.some((element) => element.src === picture.src),
+        ).map((picture, index) => (
+          <CachedImage
+            key={index}
+            src={picture.src}
+            alt="评论图片"
+            className="comment-image"
+            onClick={(display) => onImage(picture.originSrc || picture.src, display)}
+          />
+        ))}
+        {(comment.deviceTailModel || comment.tail) && (
+          <div className="comment-device-tail muted tiny">
+            <DeviceSource value={comment.deviceTailModel || comment.tail!} />
+          </div>
+        )}
         {comment.aiHint && <div className="muted tiny">{comment.aiHint}</div>}
         <div className="comment-actions">
           <Button

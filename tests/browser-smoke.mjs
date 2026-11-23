@@ -29,6 +29,12 @@ try {
     title,
     comments: await page.locator(".comment-thread").count(),
   };
+  await page.getByRole("button", { name: "好物", exact: true }).click();
+  await page.locator(".news-row").first().waitFor({ timeout: 45000 });
+  assert.ok((await page.locator(".news-row").count()) > 0);
+  report.live.deals = await page.locator(".news-row").count();
+  await page.getByRole("button", { name: "资讯", exact: true }).click();
+  await page.locator(".reader>h1").waitFor({ timeout: 45000 });
   await fs.mkdir("test-results", { recursive: true });
   await fs.mkdir("site/assets", { recursive: true });
   await page.screenshot({ path: "test-results/live-desktop.png" });
@@ -119,7 +125,7 @@ try {
     floorStr: "1楼",
     replyCommentId: 0,
     parentCommentId: 0,
-    deviceTailModel: null,
+    deviceTailModel: "官方来源测试文本",
   };
   await page.route("**/__news/json/newslist/**", (route) =>
     route.fulfill({ json: news }),
@@ -164,6 +170,12 @@ try {
       },
     }),
   );
+  await page.route("**/__appcomments/**", (route) => route.fulfill({
+    json: { success: true, content: { comments: [{
+      id: 100,
+      deviceTailModel: { name: "ThinkBook 14", color: null, darkColor: null, extraTails: [] },
+    }] } },
+  }));
   await page.route("https://img.ithome.com/test/comment-image.png", (route) =>
     route.fulfill({
       body: Buffer.from(
@@ -213,6 +225,10 @@ try {
     false,
   );
   await page.getByRole("button", { name: "取消", exact: true }).click();
+  assert.equal(
+    await page.locator(".comment-device-tail").first().innerText(),
+    "ThinkBook 14",
+  );
   const commentImage = page.locator(".comment-image img").first();
   await commentImage.waitFor();
   await commentImage.click();

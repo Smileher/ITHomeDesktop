@@ -6,6 +6,7 @@ import {
   cursorFor,
   mergeComments,
   mergeNews,
+  enrichCommentSources,
 } from "../src/domain.ts";
 import type { NewsItem, OfficialComment } from "../src/types.ts";
 
@@ -56,4 +57,21 @@ test("comment refresh updates known rows without duplicate floors", () => {
   const result = mergeComments([before], [after, { id: 2 } as OfficialComment]);
   assert.equal(result.length, 2);
   assert.equal(result[0].support, 3);
+});
+test("source enrichment matches comment IDs and preserves permission and user state", () => {
+  const web = {
+    canComment: false,
+    userId: 1,
+    comments: [{ id: 10, deviceTailModel: null as unknown, children: [{ id: 11, tail: null as string | null }] }],
+  };
+  const app = { userId: 9, canComment: true, comments: [
+    { id: 10, deviceTailModel: { name: "ThinkBook 14", extraTails: [] }, children: [{ id: 11, tail: "Xiaomi 14 Ultra" }] },
+    { id: 999, deviceTailModel: { name: "unrelated" } },
+  ] };
+  enrichCommentSources(web, app);
+  assert.equal(web.canComment, false);
+  assert.equal(web.userId, 1);
+  assert.equal(web.comments.length, 1);
+  assert.deepEqual(web.comments[0].deviceTailModel, { name: "ThinkBook 14", extraTails: [] });
+  assert.equal(web.comments[0].children[0].tail, "Xiaomi 14 Ultra");
 });

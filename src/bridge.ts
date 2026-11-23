@@ -10,7 +10,7 @@ import type {
   Stats,
 } from "./types";
 import { defaultSettings } from "./types";
-import { articleUrl } from "./domain";
+import { articleUrl, enrichCommentSources } from "./domain";
 
 export const native = isTauri();
 type Raw = Record<string, unknown>;
@@ -41,8 +41,8 @@ function mapNews(value: Raw): NewsItem {
     forbidComment: !!value.forbidcomment,
   };
 }
-async function read(url: string): Promise<Raw> {
-  const response = await fetch(url);
+async function read(url: string, timeout?: number): Promise<Raw> {
+  const response = await fetch(url, timeout ? { signal: AbortSignal.timeout(timeout) } : undefined);
   if (!response.ok) throw new Error(`网络请求失败（HTTP ${response.status}）`);
   return response.json();
 }
@@ -80,6 +80,42 @@ export const backend = {
         .map(mapNews),
     );
   },
+  async deals(refresh = false): Promise<Cached<NewsItem[]>> {
+    if (native) return invoke("get_deals", { refresh });
+    const html = await fetch("/__page/").then((response) => {
+      if (!response.ok) throw new Error(`网络请求失败（HTTP ${response.status}）`);
+      return response.text();
+    });
+    const document = new DOMParser().parseFromString(html, "text/html");
+    const seen = new Set<number>();
+    const values: NewsItem[] = [];
+    document
+      .querySelectorAll<HTMLAnchorElement>('a[href*="lapin.ithome.com/html/"]')
+      .forEach((anchor) => {
+        const match = anchor.href.match(/\/(\d+)\.htm(?:$|[?#])/);
+        const title = anchor.textContent?.trim() || "";
+        if (!match || !title) return;
+        const id = Number(match[1]);
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        const image = anchor.parentElement?.querySelector<HTMLImageElement>(
+          "img",
+        );
+        values.push({
+          id,
+          title,
+          date: "",
+          orderDate: "",
+          summary: "",
+          image: image?.dataset.src || image?.src || "",
+          url: anchor.href,
+          comments: 0,
+          forbidComment: false,
+        });
+      });
+    if (!values.length) throw new Error("好物页面未返回可识别内容");
+    return cached(values);
+  },
   async article(id: number, refresh = false): Promise<Cached<Article>> {
     if (native) return invoke("get_article", { id, refresh });
     const value = await read(`/__news/json/newscontent/${id}`);
@@ -116,6 +152,14 @@ export const backend = {
     );
     if (!value.success)
       throw new Error(String(value.message || "评论读取失败"));
+    try {
+      const source = await read(
+        `/__appcomments/apiv2/comment/getnewscomment?${new URLSearchParams({ id: String(id), cid: String(cursor), appver: "933", ...(earliest ? { latest: "1" } : {}) })}`, 4000,
+      );
+      if (source.success) enrichCommentSources(value.content, source.content);
+    } catch {
+      // Device-source retrieval must not hide otherwise readable comments.
+    }
     return value.content as CommentsPage;
   },
   async children(
@@ -129,6 +173,14 @@ export const backend = {
     );
     if (!value.success)
       throw new Error(String(value.message || "回复读取失败"));
+    try {
+      const source = await read(
+        `/__appcomments/apiv2/comment/getcommentcontent?${new URLSearchParams({ id: String(comment), appver: "933" })}`, 4000,
+      );
+      if (source.success) enrichCommentSources(value.content, source.content);
+    } catch {
+      // Preserve the web reply content when source metadata is unavailable.
+    }
     return value.content as OfficialChildren;
   },
   async submit(

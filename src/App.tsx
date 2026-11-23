@@ -293,6 +293,11 @@ export default function App() {
       if (view === "favorite" || view === "history") {
         values = await backend.items(view);
         setMore(false);
+      } else if (view === "deals") {
+        const response = await backend.deals(refresh);
+        values = response.data;
+        offline = response.stale;
+        setMore(false);
       } else {
         const cursor = append ? cursorFor(items) : null;
         const response = await backend.news(channel, cursor, refresh);
@@ -328,7 +333,7 @@ export default function App() {
   }
   useEffect(() => {
     if (!ready) return;
-    if (["news", "favorite", "history"].includes(view)) {
+    if (["news", "favorite", "history", "deals"].includes(view)) {
       setItems([]);
       setQuery("");
       void loadFeed();
@@ -349,12 +354,13 @@ export default function App() {
       setError("");
       if (
         window.innerWidth <= 600 &&
-        ["news", "favorite", "history"].includes(next)
+        ["news", "favorite", "history", "deals"].includes(next)
       ) {
         setSelected(null);
         selectedRef.current = null;
       }
-      if (!["news", "favorite", "history"].includes(next)) setQuery("");
+      if (!["news", "favorite", "history", "deals"].includes(next))
+        setQuery("");
     } catch (e) {
       setError(errorText(e));
     }
@@ -463,7 +469,7 @@ export default function App() {
       item.title.toLocaleLowerCase().includes(keyword),
     );
   }, [items, query]);
-  const officialView = ["circle", "deals", "messages", "profile"].includes(
+  const officialView = ["circle", "messages", "profile"].includes(
     view,
   );
   const selectedFavorite = article && favoriteIds.has(article.data.item.id);
@@ -656,7 +662,9 @@ export default function App() {
                 ? "仅保存在这台电脑上"
                 : view === "history"
                   ? "继续上次的阅读"
-                  : "与你一起，发现科技新鲜事"}
+                  : view === "deals"
+                    ? "IT之家首页公开推荐的好物与优惠"
+                    : "与你一起，发现科技新鲜事"}
             </div>
             <div className="feed-scroll">
               {loading && !items.length ? (
@@ -664,7 +672,31 @@ export default function App() {
                   <Spinner size="small" label="正在获取资讯" />
                 </div>
               ) : (
-                filtered.map((item) => (
+                <>
+                  {view === "news" && !query && filtered[0] && (
+                    <button
+                      className={`news-feature ${filtered[0].id === selected ? "selected" : ""}`}
+                      onClick={() => void openArticle(filtered[0].id)}
+                      aria-label={`打开焦点文章：${filtered[0].title}`}
+                    >
+                      {settings.showImages && filtered[0].image && (
+                        <CachedImage
+                          src={filtered[0].image}
+                          alt=""
+                          className="feature-image"
+                        />
+                      )}
+                      <span className="feature-shade" />
+                      <span className="feature-copy">
+                        <span className="feature-kicker">今日焦点</span>
+                        <span className="feature-title">{filtered[0].title}</span>
+                        <span className="feature-action">打开文章&nbsp; →</span>
+                      </span>
+                    </button>
+                  )}
+                  {filtered
+                    .slice(view === "news" && !query ? 1 : 0)
+                    .map((item) => (
                   <button
                     key={item.id}
                     className={`news-row ${item.id === selected ? "selected" : ""}`}
@@ -686,7 +718,8 @@ export default function App() {
                       </span>
                     </span>
                   </button>
-                ))
+                    ))}
+                </>
               )}
               {!loading && !filtered.length && (
                 <div className="empty-state small">
@@ -758,7 +791,7 @@ export default function App() {
               )}
               <p>
                 {view === "circle"
-                  ? "圈子通过独立官方页面提供，账号与内容由官方服务处理。"
+                  ? "旧版圈子接口当前只返回迁移公告，现行内容由官方 App 提供；这里保留官方页面入口，不显示过期或伪造的帖子。"
                   : view === "deals"
                     ? "在官方好物页面查看商品、优惠和促销详情。"
                     : view === "messages"
@@ -827,6 +860,40 @@ export default function App() {
             </div>
           ) : article ? (
             <>
+              <article className="reader">
+                <div className="article-kicker">
+                  {article.data.source || "IT之家"} · 科技资讯
+                </div>
+                <h1>{article.data.item.title}</h1>
+                <div className="article-meta">
+                  {displayDate(article.data.item.date, true)}
+                  <span>作者：{article.data.author || "IT之家"}</span>
+                </div>
+                {article.stale && (
+                  <div className="offline-note">
+                    正在阅读缓存内容，连接恢复后可刷新核对最新版本。
+                  </div>
+                )}
+                <ArticleBody
+                  html={article.data.html}
+                  onArticle={(id) => void openArticle(id)}
+                  onImage={showImage}
+                  onError={showError}
+                />
+                <div className="reading-end">
+                  <span></span>读到这里，也来聊聊你的看法<span></span>
+                </div>
+                <Comments
+                  key={article.data.item.id}
+                  article={article.data}
+                  profile={profile}
+                  refreshKey={commentsKey}
+                  onLogin={openLogin}
+                  onError={showError}
+                  onImage={showImage}
+                  registerFlush={registerFlush}
+                />
+              </article>
               <div className="article-toolbar">
                 <Button
                   className="back-to-list"
@@ -913,40 +980,6 @@ export default function App() {
                   </Tooltip>
                 </div>
               </div>
-              <article className="reader">
-                <div className="article-kicker">
-                  {article.data.source || "IT之家"} · 科技资讯
-                </div>
-                <h1>{article.data.item.title}</h1>
-                <div className="article-meta">
-                  {displayDate(article.data.item.date, true)}
-                  <span>作者：{article.data.author || "IT之家"}</span>
-                </div>
-                {article.stale && (
-                  <div className="offline-note">
-                    正在阅读缓存内容，连接恢复后可刷新核对最新版本。
-                  </div>
-                )}
-                <ArticleBody
-                  html={article.data.html}
-                  onArticle={(id) => void openArticle(id)}
-                  onImage={showImage}
-                  onError={showError}
-                />
-                <div className="reading-end">
-                  <span></span>读到这里，也来聊聊你的看法<span></span>
-                </div>
-                <Comments
-                  key={article.data.item.id}
-                  article={article.data}
-                  profile={profile}
-                  refreshKey={commentsKey}
-                  onLogin={openLogin}
-                  onError={showError}
-                  onImage={showImage}
-                  registerFlush={registerFlush}
-                />
-              </article>
             </>
           ) : (
             <section className="welcome">

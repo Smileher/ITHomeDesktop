@@ -17,6 +17,7 @@ use std::{
     time::Duration,
 };
 use url::Url;
+use des::{cipher::{BlockEncrypt, KeyInit}, Des};
 
 pub const CHANNELS: &[&str] = &[
     "news", "win11", "android", "ios", "digi", "it", "auto", "game",
@@ -126,6 +127,36 @@ impl Api {
         }
         cache_fallback(fetched, cached)
     }
+    pub async fn deals(&self, refresh: bool) -> Result<Cached<Vec<NewsItem>>> {
+        let key = "deals:home";
+        let cached = self.store.cache::<Vec<NewsItem>>(key)?;
+        if !refresh {
+            if let Some(value) = cached
+                .as_ref()
+                .filter(|value| now().saturating_sub(value.saved_at) < 300)
+            {
+                return Ok(value.clone());
+            }
+        }
+        let fetched = async {
+            let html = self
+                .get("https://www.ithome.com/")
+                .await?
+                .text()
+                .await
+                .map_err(network)?;
+            let items = parse_deals(&html)?;
+            self.store.put_cache(key, &items)?;
+            self.trim()?;
+            Ok(Cached {
+                data: items,
+                saved_at: now(),
+                stale: false,
+            })
+        }
+        .await;
+        cache_fallback(fetched, cached)
+    }
     pub async fn article(&self, id: u64, refresh: bool) -> Result<Cached<Article>> {
         validate_id(id)?;
         let key = format!("article:{id}");
@@ -211,8 +242,26 @@ impl Api {
             .json()
             .await
             .map_err(network)?;
+        let mut content = success_content(data)?;
+        // The web response omits device tails; the app read endpoint returns the
+        // same comments with their official source models. Keep web permissions.
+        let tails = tokio::time::timeout(Duration::from_secs(4), self.app_comments(id, cursor, earliest)).await;
+        if let Ok(Ok(tails)) = tails {
+            enrich_comment_sources(&mut content, &tails);
+        }
         self.auth.ensure_generation(generation)?;
-        success_content(data)
+        Ok(content)
+    }
+    async fn app_comments(&self, id: u64, cursor: u64, earliest: bool) -> Result<Value> {
+        let mut url = Url::parse("https://cmt.ithome.com/apiv2/comment/getnewscomment").unwrap();
+        url.query_pairs_mut()
+            .append_pair("sn", &app_comment_sn(id)?)
+            .append_pair("appver", "933")
+            .append_pair("cid", &cursor.to_string());
+        if earliest {
+            url.query_pairs_mut().append_pair("latest", "1");
+        }
+        success_content(self.get(url.as_str()).await?.json().await.map_err(network)?)
     }
     pub async fn children(&self, id: u64, comment: u64) -> Result<Value> {
         let generation = self.auth.generation.load(Ordering::SeqCst);
@@ -229,8 +278,20 @@ impl Api {
             .json::<Value>()
             .await
             .map_err(network)?;
+        let mut content = success_content(response)?;
+        let mut source_url = Url::parse("https://cmt.ithome.com/apiv2/comment/getcommentcontent").unwrap();
+        source_url.query_pairs_mut()
+            .append_pair("commentid", &app_comment_sn(comment)?)
+            .append_pair("appver", "933");
+        if let Ok(response) = self.get(source_url.as_str()).await {
+            if let Ok(value) = response.json::<Value>().await {
+                if let Ok(source) = success_content(value) {
+                    enrich_comment_sources(&mut content, &source);
+                }
+            }
+        }
         self.auth.ensure_generation(generation)?;
-        success_content(response)
+        Ok(content)
     }
     pub async fn verify_cookies(&self, cookies: &[SessionCookie], id: u64) -> Result<Profile> {
         let article = self.article(id, false).await?;
@@ -483,6 +544,106 @@ pub fn comment_sn(page: &str) -> Option<String> {
     }
     Some(value.into())
 }
+fn app_comment_sn(id: u64) -> Result<String> {
+    validate_id(id)?;
+    // Public app wire format: DES/ECB with zero padding encodes a news ID.
+    // It is not an account credential and does not grant authentication.
+    let cipher = Des::new_from_slice(b"(#i@x*l%")
+        .map_err(|_| AppError::new("protocol", "评论编号编码失败"))?;
+    let mut bytes = id.to_string().into_bytes();
+    bytes.resize(bytes.len().div_ceil(8) * 8, 0);
+    for chunk in bytes.chunks_exact_mut(8) {
+        cipher.encrypt_block(chunk.into());
+    }
+    Ok(bytes.iter().map(|value| format!("{value:02x}")).collect())
+}
+fn enrich_comment_sources(web: &mut Value, app: &Value) {
+    fn collect<'a>(value: &'a Value, map: &mut std::collections::HashMap<u64, &'a Value>) {
+        if let Some(id) = value.get("id").and_then(Value::as_u64) {
+            map.insert(id, value);
+        }
+        if let Some(array) = value.as_array() {
+            for item in array { collect(item, map); }
+        } else if let Some(object) = value.as_object() {
+            for name in ["comments", "hotComments", "topComments", "children", "comment"] {
+                if let Some(children) = object.get(name) { collect(children, map); }
+            }
+        }
+    }
+    fn apply(value: &mut Value, map: &std::collections::HashMap<u64, &Value>) {
+        if let Some(model) = value.get("id").and_then(Value::as_u64).and_then(|id| map.get(&id)) {
+            for key in ["deviceTailModel", "tail", "tailClient", "pictures"] {
+                if let Some(source) = model.get(key) { value[key] = source.clone(); }
+            }
+        }
+        if let Some(array) = value.as_array_mut() {
+            for item in array { apply(item, map); }
+        } else if let Some(object) = value.as_object_mut() {
+            for name in ["comments", "hotComments", "topComments", "children", "comment"] {
+                if let Some(children) = object.get_mut(name) { apply(children, map); }
+            }
+        }
+    }
+    let mut map = std::collections::HashMap::new();
+    collect(app, &mut map);
+    apply(web, &map);
+}
+fn parse_deals(page: &str) -> Result<Vec<NewsItem>> {
+    let document = Html::parse_document(page);
+    let selector = Selector::parse("a[href*='lapin.ithome.com/html/']")
+        .map_err(|_| AppError::new("protocol", "好物页面结构已变化"))?;
+    let image_selector = Selector::parse("img").unwrap();
+    let mut seen = HashSet::new();
+    let mut items = Vec::new();
+    for anchor in document.select(&selector) {
+        let href = anchor.value().attr("href").unwrap_or_default();
+        let Ok(url) = Url::parse(href) else { continue };
+        if url.scheme() != "https" || url.host_str() != Some("lapin.ithome.com") {
+            continue;
+        }
+        let Some(raw_id) = url
+            .path_segments()
+            .and_then(|segments| segments.last())
+            .and_then(|value| value.strip_suffix(".htm"))
+        else {
+            continue;
+        };
+        let Ok(id) = raw_id.parse::<u64>() else { continue };
+        validate_id(id)?;
+        let title = anchor.text().collect::<String>().trim().to_owned();
+        if title.is_empty() || !seen.insert(id) {
+            continue;
+        }
+        let image = anchor
+            .parent()
+            .and_then(scraper::ElementRef::wrap)
+            .and_then(|parent| parent.select(&image_selector).next())
+            .and_then(|image| image.value().attr("data-src").or_else(|| image.value().attr("src")))
+            .map(|value| {
+                if value.starts_with("//") {
+                    format!("https:{value}")
+                } else {
+                    value.to_owned()
+                }
+            })
+            .unwrap_or_default();
+        items.push(NewsItem {
+            id,
+            title,
+            date: String::new(),
+            order_date: String::new(),
+            summary: String::new(),
+            image,
+            url: href.to_owned(),
+            comments: 0,
+            forbid_comment: false,
+        });
+    }
+    if items.is_empty() {
+        return Err(AppError::new("protocol", "好物页面未返回可识别内容"));
+    }
+    Ok(items)
+}
 fn success_content(value: Value) -> Result<Value> {
     if value.get("success") == Some(&Value::Bool(true)) {
         value
@@ -579,5 +740,49 @@ mod tests {
     fn search_ignores_external_links_and_duplicates() {
         let page="<a href='https://evil.test/1/030/761.htm'>Untrusted article</a><a href='/1/030/761.htm'>微软申请新专利：手柄换摇杆仅需一把螺丝刀</a><a href='/1/030/761.htm'>重复的文章链接和标题</a>";
         assert_eq!(parse_search(page).unwrap().len(), 1);
+    }
+    #[test]
+    fn deals_parse_current_lapin_links_without_fabricating_items() {
+        let page = "<a href='https://lapin.ithome.com/html/digi/1030919.htm'>知味观芡实糕 4.9 元</a><a href='https://lapin.ithome.com/html/digi/1030919.htm'>重复</a><a href='https://evil.test/html/digi/1030920.htm'>外部链接</a>";
+        let values = parse_deals(page).unwrap();
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].id, 1030919);
+        assert_eq!(values[0].url, "https://lapin.ithome.com/html/digi/1030919.htm");
+    }
+    #[test]
+    fn source_metadata_encoding_and_merge_preserve_web_permissions() {
+        assert_eq!(app_comment_sn(1030924).unwrap(), "1b6c5f20ed526627");
+        let mut web = json!({"canComment":false,"userId":1,"comments":[{"id":10,"deviceTailModel":null,"children":[{"id":11}]}]});
+        let app = json!({"canComment":true,"userId":2,"comments":[{"id":10,"deviceTailModel":{"name":"ThinkBook 14"},"children":[{"id":11,"tail":"Xiaomi 14 Ultra"}]}]});
+        enrich_comment_sources(&mut web, &app);
+        assert_eq!(web["canComment"], false);
+        assert_eq!(web["userId"], 1);
+        assert_eq!(web["comments"][0]["deviceTailModel"]["name"], "ThinkBook 14");
+        assert_eq!(web["comments"][0]["children"][0]["tail"], "Xiaomi 14 Ultra");
+    }
+    #[test]
+    #[ignore = "Reads live public endpoints and writes cache only to an isolated temporary directory"]
+    fn live_deals_and_device_sources() {
+        let root = std::env::temp_dir().join(format!(
+            "ithome-public-read-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        ));
+        let store = Arc::new(Store::open(root.clone()).unwrap());
+        let api = Api::new(store, Arc::new(Auth::empty())).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let result = runtime.block_on(async {
+            let deals = api.deals(true).await?;
+            assert!(!deals.data.is_empty());
+            let comments = api.comments(1030924, 0, false).await?;
+            let models = comments["comments"].as_array().unwrap();
+            let with_tail = models.iter().filter(|value| value["deviceTailModel"]["name"].as_str().is_some()).count();
+            assert!(with_tail > 0, "Expected public source models on the verified sample article");
+            println!("Public reads: {} deals, {} comments with official device names", deals.data.len(), with_tail);
+            Ok::<(), AppError>(())
+        });
+        drop(api);
+        std::fs::remove_dir_all(&root).unwrap();
+        result.unwrap();
     }
 }

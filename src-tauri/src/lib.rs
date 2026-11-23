@@ -60,6 +60,15 @@ async fn get_news(
     state.api.news(&channel, cursor.as_deref(), refresh).await
 }
 #[tauri::command]
+async fn get_deals(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    refresh: bool,
+) -> Result<Cached<Vec<NewsItem>>> {
+    local(&window)?;
+    state.api.deals(refresh).await
+}
+#[tauri::command]
 async fn get_article(
     window: WebviewWindow,
     state: State<'_, AppState>,
@@ -478,6 +487,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             bootstrap,
             get_news,
+            get_deals,
             get_article,
             get_comments,
             get_children,
