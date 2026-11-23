@@ -74,7 +74,7 @@ export default function ArticleBody({
 }: {
   html: string;
   onArticle: (id: number) => void;
-  onImage: (url: string) => void;
+  onImage: (sourceUrl: string, displayUrl?: string) => void;
   onError: (text: string) => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
@@ -133,7 +133,7 @@ export default function ArticleBody({
         if (image) {
           event.preventDefault();
           const url = image.dataset.originalSrc;
-          if (url) onImage(url);
+          if (url) onImage(url, image.src);
           return;
         }
         const anchor = element.closest("a");

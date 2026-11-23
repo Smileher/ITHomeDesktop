@@ -111,7 +111,10 @@ try {
     support: 1,
     against: 0,
     userInfo: { id: 1, userNick: "测试家友", level: 1 },
-    elements: [{ type: 0, content: "仅用于离线测试的评论" }],
+    elements: [
+      { type: 0, content: "仅用于离线测试的评论" },
+      { type: 1, src: "https://img.ithome.com/test/comment-image.png" },
+    ],
     children: [],
     floorStr: "1楼",
     replyCommentId: 0,
@@ -161,6 +164,15 @@ try {
       },
     }),
   );
+  await page.route("https://img.ithome.com/test/comment-image.png", (route) =>
+    route.fulfill({
+      body: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        "base64",
+      ),
+      contentType: "image/png",
+    }),
+  );
   await page.evaluate(() => localStorage.clear());
   await page.reload({ waitUntil: "domcontentloaded" });
   await page
@@ -201,6 +213,12 @@ try {
     false,
   );
   await page.getByRole("button", { name: "取消", exact: true }).click();
+  const commentImage = page.locator(".comment-image img").first();
+  await commentImage.waitFor();
+  await commentImage.click();
+  await page.getByRole("heading", { name: "查看图片", exact: true }).waitFor();
+  assert.ok((await page.locator(".image-view img").getAttribute("src"))?.includes("comment-image.png"));
+  await page.getByRole("button", { name: "关闭图片", exact: true }).click();
   report.fixtures = {
     draftSwitch: "pass",
     draftRestart: "pass",
@@ -208,6 +226,7 @@ try {
     settings: "pass",
     htmlSanitization: "pass",
     loginGate: "pass",
+    commentImage: "pass",
   };
   for (const width of [1280, 1024, 768, 600, 420, 375, 360]) {
     await page.setViewportSize({ width, height: 860 });

@@ -33,7 +33,7 @@ export default function CachedImage({
   src: string;
   alt?: string;
   className?: string;
-  onClick?: () => void;
+  onClick?: (displayUrl: string) => void;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [ready, setReady] = useState("");
@@ -69,7 +69,7 @@ export default function CachedImage({
           loading="lazy"
           decoding="async"
           onError={() => setFailed(true)}
-          onClick={onClick}
+          onClick={() => onClick?.(ready)}
         />
       ) : (
         <span className="image-placeholder" aria-label={alt || "图片"}>

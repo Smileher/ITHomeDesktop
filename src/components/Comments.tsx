@@ -54,7 +54,7 @@ function Thread({
   depth?: number;
   onReply: (c: OfficialComment) => void;
   onError: (s: string) => void;
-  onImage: (s: string) => void;
+  onImage: (sourceUrl: string, displayUrl?: string) => void;
   onLogin: () => void;
 }) {
   const [children, setChildren] = useState(comment.children || []);
@@ -143,7 +143,14 @@ function Thread({
                 }
                 className="comment-image"
                 alt="评论图片"
-                onClick={() => onImage(element.src!)}
+                onClick={(displayUrl) =>
+                  onImage(
+                    element.src!.startsWith("//")
+                      ? `https:${element.src}`
+                      : element.src!,
+                    displayUrl,
+                  )
+                }
               />
             ) : (
               <span key={index}>{element.content || element.link || ""}</span>
@@ -218,7 +225,7 @@ export default function Comments({
   refreshKey: number;
   onLogin: () => void;
   onError: (s: string) => void;
-  onImage: (s: string) => void;
+  onImage: (sourceUrl: string, displayUrl?: string) => void;
   registerFlush: (flush: () => Promise<void>) => void;
 }) {
   const [page, setPage] = useState<CommentsPage | null>(null);

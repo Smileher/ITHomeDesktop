@@ -113,7 +113,12 @@ export default function App() {
   const [syncing, setSyncing] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [commentsKey, setCommentsKey] = useState(0);
-  const [image, setImage] = useState<string | null>(null);
+  const [image, setImage] = useState<{
+    source: string;
+    display: string;
+  } | null>(null);
+  const [imageLoading, setImageLoading] = useState(false);
+  const [imageError, setImageError] = useState(false);
   const [zoom, setZoom] = useState(false);
   const [confirm, setConfirm] = useState<{
     title: string;
@@ -138,11 +143,28 @@ export default function App() {
   const showError = useCallback((text: string) => setError(text), []);
   const openLogin = useCallback(() => {
     setLogin(true);
+    setLoginOpened(false);
     setLoginError("");
   }, []);
-  const showImage = useCallback((url: string) => {
-    setImage(url);
+  const showImage = useCallback((source: string, display = source) => {
+    const normalized = source.startsWith("//") ? `https:${source}` : source;
+    setImage({ source: normalized, display });
+    setImageLoading(display === normalized);
+    setImageError(false);
     setZoom(false);
+    if (display === normalized) {
+      void backend
+        .image(normalized)
+        .then((value) => {
+          setImage((current) =>
+            current?.source === normalized
+              ? { source: normalized, display: value }
+              : current,
+          );
+        })
+        .catch(() => {})
+        .finally(() => setImageLoading(false));
+    }
   }, []);
 
   useEffect(() => {
@@ -339,11 +361,13 @@ export default function App() {
   }
   function patchSettings(patch: Partial<Settings>) {
     const generation = ++settingsGeneration.current;
+    const candidate = { ...settingsRef.current, ...patch };
+    settingsRef.current = candidate;
+    setSettings(candidate);
     setSettingsStatus("正在保存…");
     const task = settingsQueue.current
       .catch(() => {})
       .then(async () => {
-        const candidate = { ...settingsRef.current, ...patch };
         const saved = await backend.settings(candidate);
         settingsRef.current = saved;
         setSettings(saved);
@@ -443,15 +467,18 @@ export default function App() {
     view,
   );
   const selectedFavorite = article && favoriteIds.has(article.data.item.id);
-  const theme = {
-    ...(dark ? webDarkTheme : webLightTheme),
-    colorBrandBackground: dark ? "#d6535b" : "#bd2530",
-    colorBrandBackgroundHover: dark ? "#df6971" : "#a71f29",
-    colorBrandBackgroundPressed: "#8e1923",
-    colorBrandForeground1: dark ? "#ff949b" : "#b3222d",
-    colorBrandForegroundLink: dark ? "#ff949b" : "#b3222d",
-    colorBrandStroke1: dark ? "#ff949b" : "#bd2530",
-  };
+  const theme = useMemo(
+    () => ({
+      ...(dark ? webDarkTheme : webLightTheme),
+      colorBrandBackground: dark ? "#d6535b" : "#bd2530",
+      colorBrandBackgroundHover: dark ? "#df6971" : "#a71f29",
+      colorBrandBackgroundPressed: "#8e1923",
+      colorBrandForeground1: dark ? "#ff949b" : "#b3222d",
+      colorBrandForegroundLink: dark ? "#ff949b" : "#b3222d",
+      colorBrandStroke1: dark ? "#ff949b" : "#bd2530",
+    }),
+    [dark],
+  );
 
   return (
     <FluentProvider
@@ -950,10 +977,15 @@ export default function App() {
       >
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>登录 IT之家账号</DialogTitle>
+            <DialogTitle>
+              登录 IT之家账号
+              {profile.id > 0 && remember && (
+                <span className="login-cached-badge">已缓存授权</span>
+              )}
+            </DialogTitle>
             <DialogContent>
               <p className="dialog-intro">
-                使用独立的官方登录窗口完成验证，再将会话同步到客户端。
+                在应用内打开官方登录页完成验证，授权只发送到 IT之家官方服务；同步后可缓存到本机。
               </p>
               <Checkbox
                 checked={remember}
@@ -961,14 +993,14 @@ export default function App() {
                 label="在这台电脑上保持登录"
               />
               <p className="muted tiny">
-                保持登录时，会话将由 Windows 加密保存。客户端不会保存明文密码。
+                勾选后，会话 Cookie 使用当前 Windows 用户的 DPAPI 加密保存到本机；不会保存密码。
               </p>
               {loginError && (
                 <div className="inline-error" role="alert">
                   {loginError}
                 </div>
               )}
-              {loginOpened && <p>在官方窗口完成登录后，点击“同步登录”。</p>}
+              {loginOpened && <p>完成官方登录后回到这里，点击“同步登录”核验授权。</p>}
             </DialogContent>
             <DialogActions>
               <Button onClick={() => setLogin(false)} disabled={syncing}>
@@ -1046,10 +1078,17 @@ export default function App() {
             <DialogContent>
               <div className={`image-view ${zoom ? "zoomed" : ""}`}>
                 <img
-                  src={image || ""}
+                  src={image?.display || ""}
                   alt="文章或评论中的图片"
                   onClick={() => setZoom(!zoom)}
+                  onError={() => setImageError(true)}
                 />
+                {imageLoading && <Spinner size="tiny" label="正在读取图片" />}
+                {imageError && (
+                  <span className="image-load-error">
+                    图片暂时无法显示，请重试或打开原图
+                  </span>
+                )}
               </div>
             </DialogContent>
             <DialogActions>
@@ -1061,7 +1100,7 @@ export default function App() {
                 onClick={() => {
                   if (image)
                     void backend
-                      .saveImage(image)
+                      .saveImage(image.source)
                       .then((saved) => {
                         if (saved) setStatus("图片已保存");
                       })

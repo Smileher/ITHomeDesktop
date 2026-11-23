@@ -349,7 +349,14 @@ impl Api {
         if let Some(path) = self.store.image_path(&key)? {
             return Ok(path.to_string_lossy().into_owned());
         }
-        let mut response = check(self.client.get(url).send().await.map_err(network)?)?;
+        let mut response = check(
+            self.client
+                .get(url)
+                .header(REFERER, "https://www.ithome.com/")
+                .send()
+                .await
+                .map_err(network)?,
+        )?;
         if !response
             .headers()
             .get(CONTENT_TYPE)
