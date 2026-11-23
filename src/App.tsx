@@ -92,7 +92,7 @@ export default function App() {
   const [profile, setProfile] = useState<Profile>({ id: 0, nick: "" });
   const [channel, setChannel] = useState("news");
   const [buildChannel, setBuildChannel] = useState("standalone");
-  const [version, setVersion] = useState("0.1.0");
+  const [version, setVersion] = useState("0.1.1");
   const [view, setView] = useState<View>("news");
   const [items, setItems] = useState<NewsItem[]>([]);
   const [article, setArticle] = useState<Cached<Article> | null>(null);

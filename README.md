@@ -10,7 +10,7 @@ A third-party Windows desktop client for IT Home, with a focused reading layout,
 
 - Native news channels, article reading, comment browsing, local bookmarks, history, and settings.
 - Official sign-in window, encrypted session persistence, and comment/reply/vote integration; live-account validation is still required.
-- Circles, deals, and account services open in an isolated official-page window. Native community parity and background notifications are not complete.
+- Public homepage deals are shown in the native feed; circles and account services open in an isolated official-page window because the current circle API has migrated to the official app. Native community parity and background notifications are not complete.
 - Source labels follow official responses; there is no custom tail or device impersonation.
 - Microsoft Store packaging is provided. Store identity and review are required before Store distribution.
 

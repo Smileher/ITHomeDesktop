@@ -57,7 +57,7 @@ export const backend = {
           settings: (localPreview().settings as Settings) || defaultSettings,
           profile: { id: 0, nick: "" },
           channel: "preview",
-          version: "0.1.0",
+          version: "0.1.1",
           warnings: [],
         };
   },
