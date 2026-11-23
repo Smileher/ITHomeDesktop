@@ -1,4 +1,28 @@
 /* Desktop reading layout: a narrow rail, image-led feed, and an open reader. */
+.theme-root {
+  --canvas: #fff;
+  --paper: #fff;
+  --ink: #222;
+  --muted: #6a6a6a;
+  --border: #efefef;
+  --hover: #f7f7f7;
+  --accent: #f42548;
+  --accent-soft: #fff0f3;
+}
+.theme-root.theme-dark {
+  --canvas: #1b1b1d;
+  --paper: #202023;
+  --ink: #f0f0f0;
+  --muted: #aaa;
+  --border: #303034;
+  --hover: #28282c;
+  --accent: #ff7890;
+  --accent-soft: #39242c;
+}
+/* Portal theme roots must never inherit the application's full-window layout. */
+#root > .theme-root {
+  height: 100%;
+}
 .app {
   --canvas: #fff;
   --border: #efefef;

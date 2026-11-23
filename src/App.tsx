@@ -92,7 +92,7 @@ export default function App() {
   const [profile, setProfile] = useState<Profile>({ id: 0, nick: "" });
   const [channel, setChannel] = useState("news");
   const [buildChannel, setBuildChannel] = useState("standalone");
-  const [version, setVersion] = useState("0.1.1");
+  const [version, setVersion] = useState("0.1.2");
   const [view, setView] = useState<View>("news");
   const [items, setItems] = useState<NewsItem[]>([]);
   const [article, setArticle] = useState<Cached<Article> | null>(null);
@@ -489,6 +489,9 @@ export default function App() {
   return (
     <FluentProvider
       theme={theme}
+      className={`theme-root ${dark ? "theme-dark" : ""}`}
+    >
+      <div
       className={`app ${dark ? "dark" : "light"} ${settings.compact ? "compact" : ""} ${selected ? "has-article" : ""} ${focused ? "focus-reading" : ""}`}
       style={
         { "--reader-font": `${settings.fontSize}px` } as React.CSSProperties
@@ -1146,6 +1149,7 @@ export default function App() {
           </DialogBody>
         </DialogSurface>
       </Dialog>
+      </div>
     </FluentProvider>
   );
 }

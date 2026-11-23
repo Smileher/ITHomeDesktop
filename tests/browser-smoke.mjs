@@ -24,6 +24,13 @@ try {
     .waitFor({ timeout: 30000 });
   const title = await page.locator(".reader>h1").innerText();
   assert.ok(title.length > 5);
+  await page.locator('.top-actions button[aria-label^="切换"]').hover();
+  await page.getByRole("tooltip").waitFor();
+  assert.equal(await page.locator(".app").count(), 1, "Tooltip portals must not inherit the app layout");
+  assert.equal(await page.evaluate(() =>
+    !!document.elementFromPoint(100, 100)?.closest('[data-portal-node="true"]'),
+  ), false, "Tooltip portal must not cover the content");
+  await page.mouse.move(3, 3);
   report.live = {
     articles: await page.locator(".news-row").count(),
     title,
