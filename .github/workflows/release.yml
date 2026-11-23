@@ -1,0 +1,59 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture: [x64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc,aarch64-pc-windows-msvc
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            src-tauri/target
+          key: release-${{ matrix.architecture }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+      - run: pnpm install --frozen-lockfile
+      - name: Validate release versions
+        run: node scripts/check-version.mjs
+      - name: Build installer and portable archive
+        shell: pwsh
+        env:
+          ASSET_ARCH: ${{ matrix.architecture }}
+        run: ./scripts/build-release.ps1 -Architecture $env:ASSET_ARCH
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.architecture }}
+          path: src-tauri/target/release-assets/${{ matrix.architecture }}/*.*
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Publish preview release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p 'JSON.parse(require("fs").readFileSync("package.json","utf8")).version')
+          cat artifacts/windows-*/SHA256SUMS.txt > artifacts/SHA256SUMS.txt
+          gh release create "v$VERSION" --verify-tag --prerelease --title "ITHome Desktop $VERSION Preview" --notes-file "docs/releases/$VERSION.md" artifacts/windows-*/*.exe artifacts/windows-*/*.zip artifacts/SHA256SUMS.txt
