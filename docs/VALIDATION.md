@@ -15,6 +15,7 @@
 | 编译后的 Windows 程序 | 真实 IPC 读取资讯/正文/评论；SQLite 缓存、配置拒绝非法值、草稿身份隔离、拒绝未登录写请求通过 |
 | 官方独立窗口 | 可打开真实文章；远程页面不能调用本地应用命令；浏览器 Cookie 读取和未登录会话拒绝通过 |
 | 官网 | 中、英、隐私三页面；1280、768、375、320 宽度与主题切换通过，已查看截图 |
+| Store 开发包 | x64 MSIX 已生成（3,430,564 字节），Windows SDK MakeAppx 10.0.26100.9457 校验通过；使用开发身份、未签名，不代表商店提交或安装认证通过 |
 | Clippy | 本机稳定工具链未安装 clippy 组件；未将其记为通过 |
 
 运行记录位于本机 `test-results/`，不提交账户数据。浏览器测试中的受控内容与真实匿名请求分开统计，不向真实用户发布测试评论或点赞。
@@ -34,3 +35,16 @@ Release 构建实测：当前文章阅读场景下整个进程树约 **254.3 MB 
 x64 安装包 2,682,167 字节（约 2.56 MiB）；便携 ZIP 3,444,315 字节（约 3.28 MiB）。二者不包含共享的 WebView2 运行时，缓存也单独计算。安装包已由 NSIS 成功生成，Release 程序已通过上述原生检查。
 
 开发构建另测得约 403 MB / 8 个进程，仅作调试场景记录，不作为产品体积或 Release 内存指标。
+
+## GitHub 发布验证
+
+`v0.1.0` 对应源码 `2c88e1aeb1fb81cee7b8adb2814c3f46f31cabb2`。GitHub Check、x64/ARM64 Release 构建及发布均成功；预览版包含两种架构的安装包、便携 ZIP 和合并的 SHA-256 清单。四个包的清单值均与 GitHub 资产 SHA-256 摘要一致。
+
+发布的 x64 安装包为 2,693,046 字节，便携 ZIP 为 3,458,470 字节；ARM64 安装包为 2,447,089 字节，便携 ZIP 为 3,374,051 字节。上述数字来自 GitHub 构建，与本机构建体积分别记录；ARM64 构建成功不代表实机运行验证通过。
+
+Release 完成后 Pages 工作流成功更新官网。中、英首页及隐私页面均返回 HTTP 200，中英首页各包含四个正确的 `v0.1.0` 资产下载链接和悬浮导航截图。
+
+- [源码检查](https://github.com/Smileher/ITHomeDesktop/actions/runs/45106703152)
+- [构建及发布](https://github.com/Smileher/ITHomeDesktop/actions/runs/45106703133)
+- [官网部署](https://github.com/Smileher/ITHomeDesktop/actions/runs/45107473901)
+- [预览版下载](https://github.com/Smileher/ITHomeDesktop/releases/tag/v0.1.0)
