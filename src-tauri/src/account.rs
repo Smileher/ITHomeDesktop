@@ -125,6 +125,39 @@ async fn response_json(request: RequestBuilder) -> Result<Value> {
     Ok(value)
 }
 impl Api {
+    pub async fn user_data(&self, kind: &str, id: u64, page: u32, cursor: u64) -> Result<Value> {
+        validate_id(id)?;
+        if page == 0 || page > 500 {
+            return Err(AppError::new("validation", "用户主页分页无效"));
+        }
+        let raw = match kind {
+            "profile" => format!("https://napi.ithome.com/api/user/gui?suid={}&appver=930&rawappver=9.30&platform=ithome_android", crate::api::app_comment_sn(id)?),
+            "posts" => format!("https://qapi.ithome.com/api/content/getusercontents?userId={id}&page={page}&pageSize=20&appver=937&rawappver=9.37&platform=ithome_android"),
+            "replies" => format!("https://qapi.ithome.com/api/comment/getusercomments?userid={id}&page={page}&appver=937&rawappver=9.37&platform=ithome_android"),
+            "comments" => format!("https://cmt.ithome.com/apiv2/comment/getotherusercommentlist?userID={}&lessthanID={cursor}&appver=932&rawappver=9.32&platform=ithome_android", crate::api::app_comment_sn(id)?.to_ascii_uppercase()),
+            _ => return Err(AppError::new("validation", "用户主页内容无效")),
+        };
+        let mut url = Url::parse(&raw).map_err(AppError::storage)?;
+        let generation = self.auth.generation.load(Ordering::SeqCst);
+        let request = if ["comments", "replies"].contains(&kind) {
+            let (_, token, hash) = self.credential().await?;
+            url.query_pairs_mut().append_pair("userhash", if kind == "comments" && !hash.is_empty() { &hash } else { &token });
+            self.account_headers(self.client.get(url.clone()), &url, &token)?
+        } else {
+            self.client.get(url).header(REFERER, "https://www.ithome.com/")
+        };
+        let value = response_json(request).await?;
+        self.auth.ensure_generation(generation)?;
+        if kind == "profile" {
+            if !value.get("nickname").is_some_and(Value::is_string) {
+                return Err(AppError::new("protocol", "用户资料响应格式已变化"));
+            }
+            return Ok(value);
+        }
+        value.get("data").or_else(|| value.get("content")).filter(|v| !v.is_null())
+            .cloned().ok_or_else(|| AppError::new("protocol", "用户主页响应缺少内容"))
+    }
+
     async fn credential(&self) -> Result<(u64, String, String)> {
         let generation = self.auth.generation.load(Ordering::SeqCst);
         let session = self.auth.session()?;

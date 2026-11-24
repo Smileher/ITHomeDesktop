@@ -96,7 +96,7 @@ try {
           color: "#4669b2",
           extraTails: [],
         },
-        children: [],
+        children: id === 1 ? [comment(11, 1)] : id === 11 ? [comment(12, 1)] : [],
         parentCommentId: 0,
         replyCommentId: 0,
       });
@@ -133,6 +133,10 @@ try {
             };
           if (command === "validate_session" || command === "sync_login")
             return { id: 1, nick: "界面测试账号" };
+          if (command === "user_data") {
+            if (args.kind === "profile") return { nickname: "界面测试账号", rank: 57, regtime: "2020-01-01T00:00:00", iplocation: "测试区域", commentcount: 2, newquancontentcount: 0, newquancommentcount: 0 };
+            return { list: [], current: 1, pageSize: 20, total: 0 };
+          }
           if (command === "get_news" || command === "get_deals")
             return { data: [item], savedAt: Date.now() / 1000, stale: false };
           if (command === "get_article")
@@ -220,10 +224,28 @@ try {
   await fixture.goto(base);
   await fixture.locator(".comment-thread").first().waitFor();
   assert.equal(
-    await fixture.locator(".comment-thread").count(),
-    1,
+    await fixture.locator(".comment-thread:not(.nested)").count(),
+    2,
     "Official blacklist must hide the blocked author",
   );
+  assert.equal(await fixture.getByRole("textbox", { name: "评论草稿" }).count(), 0);
+  await fixture.locator(".toolbar-comment").click();
+  await fixture.getByRole("textbox", { name: "评论草稿" }).waitFor();
+  await fixture.getByRole("button", { name: "暂存并关闭", exact: true }).click();
+  const feedWidth = (await fixture.locator(".feed-pane").boundingBox()).width;
+  const handle = await fixture.locator(".splitter").boundingBox();
+  await fixture.mouse.move(handle.x + handle.width / 2, 200);
+  await fixture.mouse.down(); await fixture.mouse.move(handle.x + 72, 200); await fixture.mouse.up();
+  assert.ok((await fixture.locator(".feed-pane").boundingBox()).width > feedWidth + 50);
+  await fixture.setViewportSize({ width: 900, height: 860 });
+  assert.ok((await fixture.locator(".detail-pane").boundingBox()).width >= 390, "Resizing after dragging must keep a usable reader");
+  await fixture.setViewportSize({ width: 1280, height: 860 });
+  await fixture.locator(".news-row.selected").click();
+  await fixture.locator(".welcome").waitFor();
+  await fixture.locator(".news-row").first().click();
+  await fixture.locator(".reader").waitFor();
+  assert.equal(await fixture.evaluate(() => !window.dispatchEvent(new MouseEvent("contextmenu", { cancelable: true }))), true);
+  for (const key of ["F12", "I", "J", "C", "U"]) assert.equal(await fixture.evaluate((key) => !window.dispatchEvent(new KeyboardEvent("keydown", { key, ctrlKey: key !== "F12", shiftKey: ["I", "J", "C"].includes(key), cancelable: true })), key), true);
   await fs.mkdir("test-results", { recursive: true });
   await fixture.locator(".detail-pane").evaluate((element) => {
     element.scrollTop = element.scrollHeight;
@@ -257,7 +279,7 @@ try {
   await fixture.getByRole("button", { name: "加载更多", exact: true }).click();
   await fixture.locator(".account-row").nth(20).waitFor();
   await fixture
-    .getByRole("button", { name: "取消官方收藏", exact: true })
+    .getByRole("button", { name: "取消收藏", exact: true })
     .first()
     .click();
   await fixture
@@ -281,6 +303,7 @@ try {
     .getByRole("button", { name: "设置", exact: true })
     .last()
     .click();
+  await fixture.locator(".settings-sections").getByRole("button", { name: "账号", exact: false }).click();
   await fixture.getByRole("switch", { name: "只读模式", exact: true }).click();
   assert.equal(
     await fixture.evaluate(() => window.__fixture.settings.readOnly),
@@ -288,6 +311,10 @@ try {
   );
   await fs.mkdir("test-results", { recursive: true });
   await fixture.screenshot({ path: "test-results/settings-desktop.png" });
+  for (const name of ["外观", "阅读", "存储", "关于"]) {
+    await fixture.locator(".settings-sections").getByRole("button", { name, exact: false }).click();
+    await fixture.screenshot({ path: 'test-results/settings-' + name + '.png' });
+  }
   await fixture.getByRole("button", { name: "我的", exact: true }).click();
   await fixture.getByRole("button", { name: "返回账号首页" }).click();
   await fixture.screenshot({ path: "test-results/account-desktop.png" });

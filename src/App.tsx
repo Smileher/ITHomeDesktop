@@ -23,8 +23,8 @@ import {
   ArrowLeftRegular,
   ArrowSyncRegular,
   ArrowUpRightRegular,
-  BookmarkRegular,
-  BookmarkFilled,
+  StarRegular,
+  StarFilled,
   CheckmarkRegular,
   DismissRegular,
   HistoryRegular,
@@ -57,17 +57,19 @@ import {
 import { channels, defaultSettings } from "./types";
 import type { Article, Cached, NewsItem, Profile, Settings } from "./types";
 import CachedImage from "./components/CachedImage";
+import { loadDisplayImage, releaseDisplayImage } from "./components/CachedImage";
 import ArticleBody from "./components/ArticleBody";
 import Comments from "./components/Comments";
 import SettingsView from "./components/SettingsView";
 import CircleView from "./components/CircleView";
 import AccountCenter from "./components/AccountCenter";
+import UserProfile from "./components/UserProfile";
+import { avatarUrl } from "./account-domain";
 import type { AccountTab } from "./account-domain";
 import appLogo from "./assets/app.svg";
 
 type View =
   | "news"
-  | "favorite"
   | "history"
   | "settings"
   | "circle"
@@ -76,7 +78,6 @@ type View =
   | "profile";
 const names: Record<View, string> = {
   news: "资讯",
-  favorite: "本机收藏",
   history: "浏览记录",
   settings: "设置",
   circle: "圈子",
@@ -95,16 +96,19 @@ export default function App() {
   const [profile, setProfile] = useState<Profile>({ id: 0, nick: "" });
   const [channel, setChannel] = useState("news");
   const [buildChannel, setBuildChannel] = useState("standalone");
-  const [version, setVersion] = useState("0.1.3");
+  const [version, setVersion] = useState("0.1.4");
   const [view, setView] = useState<View>("news");
   const [accountTab, setAccountTab] = useState<AccountTab>("home");
+  const [userTarget, setUserTarget] = useState<{ id: number; name: string } | null>(null);
   const [circleTarget, setCircleTarget] = useState(0);
   const [blockedIds, setBlockedIds] = useState(new Set<number>());
   const [blacklistKey, setBlacklistKey] = useState(0);
   const [items, setItems] = useState<NewsItem[]>([]);
   const [article, setArticle] = useState<Cached<Article> | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
-  const [favoriteIds, setFavoriteIds] = useState(new Set<number>());
+  const [officialFavoriteIds, setOfficialFavoriteIds] = useState(new Set<number>());
+  const [favoritesReady, setFavoritesReady] = useState(false);
+  const [favoritesRefresh, setFavoritesRefresh] = useState(0);
   const [loading, setLoading] = useState(true);
   const [articleLoading, setArticleLoading] = useState(false);
   const [cloudSaving, setCloudSaving] = useState(false);
@@ -129,6 +133,10 @@ export default function App() {
   const [imageLoading, setImageLoading] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [zoom, setZoom] = useState(false);
+  const imageGeneration = useRef(0);
+  const viewerImage = useRef("");
+  const [listWidth, setListWidth] = useState(360);
+  const draggingSplit = useRef(false);
   const [confirm, setConfirm] = useState<{
     title: string;
     action: () => Promise<void>;
@@ -163,24 +171,42 @@ export default function App() {
     const subscription = listen("official-login-ready", () => { void loginSync.current(); });
     return () => { void subscription.then((unlisten) => unlisten()); };
   }, [loginOpened]);
+  const closeImage = useCallback(() => {
+    imageGeneration.current += 1;
+    releaseDisplayImage(viewerImage.current);
+    viewerImage.current = "";
+    setImage(null);
+    setImageLoading(false);
+    setImageError(false);
+    setZoom(false);
+  }, []);
   const showImage = useCallback((source: string, display = source) => {
+    const token = ++imageGeneration.current;
+    releaseDisplayImage(viewerImage.current);
+    viewerImage.current = "";
     const normalized = source.startsWith("//") ? `https:${source}` : source;
     setImage({ source: normalized, display });
     setImageLoading(display === normalized);
     setImageError(false);
     setZoom(false);
-    if (display === normalized) {
-      void backend
-        .image(normalized)
+    {
+      void loadDisplayImage(normalized)
         .then((value) => {
+          if (token !== imageGeneration.current) {
+            releaseDisplayImage(value);
+            return;
+          }
+          viewerImage.current = value;
           setImage((current) =>
-            current?.source === normalized
+            token === imageGeneration.current && current?.source === normalized
               ? { source: normalized, display: value }
               : current,
           );
         })
         .catch(() => {})
-        .finally(() => setImageLoading(false));
+        .finally(() => {
+          if (token === imageGeneration.current) setImageLoading(false);
+        });
     }
   }, []);
 
@@ -190,6 +216,36 @@ export default function App() {
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ id: number; name: string }>).detail;
+      if (Number.isSafeInteger(detail.id) && detail.id > 0) setUserTarget(detail);
+    };
+    window.addEventListener("ithome-user", handler);
+    return () => window.removeEventListener("ithome-user", handler);
+  }, []);
+  useEffect(() => {
+    let live = true;
+    setOfficialFavoriteIds(new Set());
+    setFavoritesReady(false);
+    if (profile.id) void (async () => {
+      const ids = new Set<number>();
+      // Retain only IDs, not account payloads/thumbnails. Do not infer absence from page one.
+      for (let page = 1; live && page <= 500; page += 1) {
+        const rows = await backend.account<{ newsId: number }[]>("favorites", page);
+        if (!live) return;
+        const before = ids.size;
+        rows.forEach((row) => ids.add(row.newsId));
+        if (rows.length < 20 || ids.size === before) {
+          setOfficialFavoriteIds(ids);
+          setFavoritesReady(true);
+          return;
+        }
+      }
+      if (live) setStatus("收藏数量较多，请在收藏页面核对状态");
+    })().catch(() => { if (live) setStatus("收藏状态暂未同步，可在账号中心刷新收藏列表"); });
+    return () => { live = false; };
+  }, [profile.id, favoritesRefresh]);
   useEffect(() => {
     document.documentElement.style.colorScheme = dark ? "dark" : "light";
   }, [dark]);
@@ -201,6 +257,26 @@ export default function App() {
     }).catch(() => { if (live) setStatus("黑名单暂未同步，可在账号中心重试"); });
     return () => { live = false; };
   }, [profile.id, blacklistKey]);
+  useEffect(() => {
+    const preventShortcuts = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (
+        key === "f12" ||
+        (event.ctrlKey && ["u", "s"].includes(key)) ||
+        (event.ctrlKey && event.shiftKey && ["i", "j", "c"].includes(key))
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    const preventContext = (event: MouseEvent) => event.preventDefault();
+    window.addEventListener("keydown", preventShortcuts, true);
+    window.addEventListener("contextmenu", preventContext, true);
+    return () => {
+      window.removeEventListener("keydown", preventShortcuts, true);
+      window.removeEventListener("contextmenu", preventContext, true);
+    };
+  }, []);
   useEffect(() => {
     let live = true;
     void backend
@@ -275,6 +351,14 @@ export default function App() {
       setError(errorText(e));
       return;
     }
+    if (selectedRef.current === id && article) {
+      articleGeneration.current += 1;
+      setSelected(null);
+      selectedRef.current = null;
+      setArticle(null);
+      setArticleLoading(false);
+      return;
+    }
     if (selectedRef.current && articleScroll.current)
       positions.current.set(
         selectedRef.current,
@@ -308,10 +392,6 @@ export default function App() {
       if (token === articleGeneration.current) setArticleLoading(false);
     }
   }
-  async function reloadFavorites() {
-    const values = await backend.items("favorite");
-    setFavoriteIds(new Set(values.map((item) => item.id)));
-  }
   async function loadFeed(append = false, refresh = false) {
     const token = ++feedGeneration.current;
     setLoading(true);
@@ -319,7 +399,7 @@ export default function App() {
     try {
       let values: NewsItem[];
       let offline = false;
-      if (view === "favorite" || view === "history") {
+      if (view === "history") {
         values = await backend.items(view);
         setMore(false);
       } else if (view === "deals") {
@@ -364,11 +444,10 @@ export default function App() {
   }
   useEffect(() => {
     if (!ready) return;
-    if (["news", "favorite", "history", "deals"].includes(view)) {
+    if (["news", "history", "deals"].includes(view)) {
       setItems([]);
       setQuery("");
       void loadFeed();
-      void reloadFavorites().catch((e) => setError(errorText(e)));
     } else {
       feedGeneration.current += 1;
       setLoading(false);
@@ -393,13 +472,20 @@ export default function App() {
       setError("");
       if (
         window.innerWidth <= 600 &&
-        ["news", "favorite", "history", "deals"].includes(next)
+        ["news", "history", "deals"].includes(next)
       ) {
         setSelected(null);
         selectedRef.current = null;
       }
-      if (!["news", "favorite", "history", "deals"].includes(next))
+      if (!["news", "history", "deals"].includes(next))
         setQuery("");
+      if (!["news", "history", "deals"].includes(next)) {
+        articleGeneration.current += 1;
+        setSelected(null);
+        selectedRef.current = null;
+        setArticle(null);
+        setArticleLoading(false);
+      }
     } catch (e) {
       setError(errorText(e));
     }
@@ -437,16 +523,27 @@ export default function App() {
     settingsQueue.current = task;
     await task;
   }
-  async function toggleFavorite() {
+  async function toggleOfficialFavorite() {
     if (!article) return;
-    const enabled = !favoriteIds.has(article.data.item.id);
+    const id = article.data.item.id;
+    const enabled = !officialFavoriteIds.has(id);
+    if (!profile.id) {
+      openLogin();
+      return;
+    }
     try {
-      await backend.favorite(article.data.item, enabled);
-      await reloadFavorites();
-      if (view === "favorite") await loadFeed();
-      setStatus(enabled ? "已加入本机收藏" : "已取消本机收藏");
+      setCloudSaving(true);
+      await backend.accountAction(enabled ? "favorite-add" : "favorite-remove", id);
+      setOfficialFavoriteIds((current) => {
+        const next = new Set(current);
+        if (enabled) next.add(id); else next.delete(id);
+        return next;
+      });
+      setStatus(enabled ? "已加入收藏" : "已取消收藏");
     } catch (e) {
       setError(errorText(e));
+    } finally {
+      setCloudSaving(false);
     }
   }
   async function search() {
@@ -514,7 +611,12 @@ export default function App() {
   const officialView = ["messages", "profile"].includes(
     view,
   );
-  const selectedFavorite = article && favoriteIds.has(article.data.item.id);
+  const selectedFavorite = article && officialFavoriteIds.has(article.data.item.id);
+  const articleForComments = useMemo(() => {
+    if (!article) return null;
+    const feedCount = items.find((item) => item.id === article.data.item.id)?.comments || 0;
+    return { ...article.data, item: { ...article.data.item, comments: Math.max(article.data.item.comments, feedCount) } };
+  }, [article, items]);
   const theme = useMemo(
     () => ({
       ...(dark ? webDarkTheme : webLightTheme),
@@ -539,8 +641,9 @@ export default function App() {
     >
       <div
       className={`app ${dark ? "dark" : "light"} ${settings.compact ? "compact" : ""} ${selected ? "has-article" : ""} ${focused ? "focus-reading" : ""} ${settings.articleImages ? "" : "hide-article-images"} ${settings.showCommentComposer ? "" : "hide-composer"} ${settings.pinnedCard ? "pinned-cards" : ""} ${settings.circleGrid ? "" : "circle-large-images"}`}
-      style={
+        style={
         { "--reader-font": `${settings.fontSize}px`, "--reader-line-height": settings.lineHeight,
+          "--feed-width": `${listWidth}px`,
           "--ui-font": settings.uiFont === "system" ? '"Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif' : `"${settings.uiFont}", sans-serif`,
           "--body-font": settings.bodyFont === "system" ? "inherit" : `"${settings.bodyFont}", serif`,
         } as React.CSSProperties
@@ -635,14 +738,6 @@ export default function App() {
             <span className="nav-label">我的内容</span>
             <Button
               appearance="subtle"
-              className={view === "favorite" ? "nav-active" : ""}
-              icon={<BookmarkRegular />}
-              onClick={() => void navigate("favorite")}
-            >
-              本机收藏
-            </Button>
-            <Button
-              appearance="subtle"
               className={view === "history" ? "nav-active" : ""}
               icon={<HistoryRegular />}
               onClick={() => void navigate("history")}
@@ -655,7 +750,7 @@ export default function App() {
               appearance="subtle"
               aria-label="我的"
               className={
-                ["profile", "favorite", "history", "settings"].includes(view)
+                ["profile", "history", "settings"].includes(view)
                   ? "profile-nav-active"
                   : ""
               }
@@ -664,7 +759,7 @@ export default function App() {
               <span className="mobile-my-icon">
                 <PersonRegular />
               </span>
-              <Avatar name={profile.nick || "家友"} size={28} />
+              <Avatar name={profile.nick || "家友"} image={profile.id ? { src: avatarUrl(profile.id) } : undefined} size={28} />
               <span>{profile.nick || "登录账号"}</span>
             </Button>
             <Button
@@ -710,9 +805,7 @@ export default function App() {
             )}
             <div className="feed-caption">
               <CheckmarkRegular />
-              {view === "favorite"
-                ? "仅保存在这台电脑上"
-                : view === "history"
+              {view === "history"
                   ? "继续上次的阅读"
                   : view === "deals"
                     ? "IT之家首页公开推荐的好物与优惠"
@@ -729,6 +822,7 @@ export default function App() {
                     .map((item) => (
                   <button
                     key={item.id}
+                    data-news-id={item.id}
                     className={`news-row ${item.id === selected ? "selected" : ""} ${item.pinned ? "pinned" : ""}`}
                     onClick={() => void openArticle(item.id)}
                     aria-pressed={item.id === selected}
@@ -760,9 +854,7 @@ export default function App() {
                   <p>
                     {query
                       ? "当前列表没有匹配项，可按回车全站搜索。"
-                      : view === "favorite"
-                        ? "喜欢的文章，收藏在这里。"
-                        : view === "history"
+                      : view === "history"
                           ? "读过的文章会出现在这里。"
                           : "暂时没有可显示的资讯。"}
                   </p>
@@ -788,14 +880,31 @@ export default function App() {
             </div>
           </section>
         )}
+          <button
+            className="splitter"
+            type="button"
+            aria-label="拖动调整资讯列表宽度"
+            onPointerDown={(event) => {
+              draggingSplit.current = true;
+              event.currentTarget.setPointerCapture(event.pointerId);
+            }}
+            onPointerMove={(event) => {
+              if (!draggingSplit.current) return;
+              setListWidth(Math.max(280, Math.min(560, window.innerWidth - 480, event.clientX - (document.querySelector(".sidebar")?.getBoundingClientRect().width || 80))));
+            }}
+            onPointerUp={() => { draggingSplit.current = false; }}
+            onPointerCancel={() => { draggingSplit.current = false; }}
+          />
         <main className="detail-pane" ref={articleScroll}>
+
           {view === "circle" ? <CircleView onImage={showImage} initialId={circleTarget} blockedIds={blockedIds} /> : view === "profile" ? (
             <AccountCenter profile={profile} tab={accountTab} onTab={setAccountTab} onLogin={openLogin}
               onLogout={() => setConfirm({ title: "退出当前账号？已保存的草稿会按账号保留。", action: logout })}
               onSettings={() => void navigate("settings")} onHistory={() => void navigate("history")}
-              onLocalFavorites={() => void navigate("favorite")} readOnly={settings.readOnly}
+              readOnly={settings.readOnly}
               onConfirm={(title, action) => setConfirm({ title, action })}
               onBlacklistChanged={() => setBlacklistKey((value) => value + 1)}
+              onFavoritesChanged={() => setFavoritesRefresh((value) => value + 1)}
               onArticle={(id) => void navigate("news").then(() => openArticle(id))}
               onPost={(id) => { setCircleTarget(id); void navigate("circle"); }} />
           ) : view === "settings" ? (
@@ -840,119 +949,39 @@ export default function App() {
                 )}
                 <ArticleBody
                   html={article.data.html}
+                  showImages={settings.articleImages}
                   onArticle={(id) => void openArticle(id)}
                   onImage={showImage}
                   onError={showError}
                 />
-                <div className="reading-end">
-                  <span></span>读到这里，也来聊聊你的看法<span></span>
-                </div>
-                <Comments
-                  key={article.data.item.id}
-                  article={article.data}
-                  profile={profile}
-                  refreshKey={commentsKey}
-                  onLogin={openLogin}
-                  onError={showError}
-                  onImage={showImage}
-                  registerFlush={registerFlush}
-                  readOnly={settings.readOnly}
-                  blockedIds={blockedIds}
-                />
+                <div className="reading-end"><span></span>读到这里，也来聊聊你的看法<span></span></div>
+                <Comments key={article.data.item.id} article={articleForComments!} profile={profile}
+                  refreshKey={commentsKey} onLogin={openLogin} onError={showError} onImage={showImage}
+                  registerFlush={registerFlush} readOnly={settings.readOnly} blockedIds={blockedIds} showComposer={settings.showCommentComposer} />
               </article>
               <div className="article-toolbar">
-                <Button
-                  className="back-to-list"
-                  appearance="subtle"
-                  icon={<ArrowLeftRegular />}
-                  onClick={() => {
-                    void flush
-                      .current()
-                      .then(() => {
-                        setSelected(null);
-                        selectedRef.current = null;
-                        setFocused(false);
-                      })
-                      .catch((e) => setError(errorText(e)));
-                  }}
-                >
-                  返回列表
-                </Button>
-                <span className="muted tiny article-breadcrumb">
-                  {channels.find((c) => c.id === channel)?.name || "资讯"} /
-                  正文
-                </span>
-                <div className="push-right toolbar-actions">
-                  <Tooltip content="收藏到官方账号，与官方客户端同步" relationship="label">
-                    <Button appearance="subtle" disabled={settings.readOnly || cloudSaving} onClick={() => {
-                      if (!profile.id) { openLogin(); return; }
-                      setCloudSaving(true);
-                      void backend.accountAction("favorite-add", article.data.item.id).then(() => setStatus("已加入官方收藏"))
-                        .catch((e) => setError(errorText(e))).finally(() => setCloudSaving(false));
-                    }}>官方收藏</Button>
-                  </Tooltip>
-                  <Tooltip
-                    content={selectedFavorite ? "取消本机收藏" : "加入本机收藏"}
-                    relationship="label"
-                  >
-                    <Button
-                      appearance="subtle"
-                      icon={
-                        selectedFavorite ? (
-                          <BookmarkFilled />
-                        ) : (
-                          <BookmarkRegular />
-                        )
-                      }
-                      onClick={() => void toggleFavorite()}
-                      aria-pressed={!!selectedFavorite}
-                    />
-                  </Tooltip>
-                  <Tooltip content="跳到评论" relationship="label">
-                    <Button
-                      appearance="subtle"
-                      icon={<CommentRegular />}
-                      onClick={() =>
-                        document
-                          .querySelector(".comments")
-                          ?.scrollIntoView({
-                            behavior: "smooth",
-                            block: "start",
-                          })
-                      }
-                    >
-                      {article.data.item.comments || ""}
-                    </Button>
-                  </Tooltip>
-                  <Tooltip content="在官方页面查看" relationship="label">
-                    <Button
-                      appearance="subtle"
-                      icon={<ArrowUpRightRegular />}
-                      onClick={() =>
-                        void backend
-                          .official("article", article.data.item.id)
-                          .catch((e) => setError(errorText(e)))
-                      }
-                    />
-                  </Tooltip>
-                  <Tooltip
-                    content={focused ? "恢复列表" : "专注阅读"}
-                    relationship="label"
-                  >
-                    <Button
-                      appearance="subtle"
-                      icon={
-                        focused ? (
-                          <PanelLeftExpandRegular />
-                        ) : (
-                          <PanelLeftContractRegular />
-                        )
-                      }
-                      aria-pressed={focused}
-                      onClick={() => setFocused(!focused)}
-                    />
-                  </Tooltip>
-                </div>
+                <Tooltip content={focused ? "恢复列表" : "专注阅读"} relationship="label">
+                  <Button appearance="subtle" icon={focused ? <PanelLeftExpandRegular /> : <PanelLeftContractRegular />}
+                    aria-pressed={focused} onClick={() => setFocused(!focused)} />
+                </Tooltip>
+                <Button className="back-to-list" appearance="subtle" icon={<ArrowLeftRegular />}
+                  onClick={() => void flush.current().then(() => { setSelected(null); selectedRef.current = null; setArticle(null); setFocused(false); }).catch((e) => setError(errorText(e)))}>返回列表</Button>
+                <span className="toolbar-spacer" />
+                <Tooltip content={selectedFavorite ? "取消收藏" : "收藏"} relationship="label">
+                  <Button appearance="subtle" icon={selectedFavorite ? <StarFilled /> : <StarRegular />}
+                    disabled={settings.readOnly || cloudSaving || (!!profile.id && !favoritesReady)} aria-pressed={!!selectedFavorite}
+                    onClick={() => void toggleOfficialFavorite()} />
+                </Tooltip>
+                <Tooltip content="在官方页面查看" relationship="label">
+                  <Button appearance="subtle" icon={<ArrowUpRightRegular />} onClick={() => void backend.official("article", article.data.item.id).catch((e) => setError(errorText(e)))} />
+                </Tooltip>
+                <span className="toolbar-spacer" />
+                <Tooltip content="写评论" relationship="label">
+                  <Button className="toolbar-comment" appearance="subtle" icon={<CommentRegular />}
+                    onClick={() => window.dispatchEvent(new CustomEvent("ithome-compose", { detail: article.data.item.id }))}>
+                    <span className="comment-count">{articleForComments?.item.comments || 0}</span>
+                  </Button>
+                </Tooltip>
               </div>
             </>
           ) : (
@@ -1066,10 +1095,18 @@ export default function App() {
           </DialogBody>
         </DialogSurface>
       </Dialog>
-      <Dialog
-        open={!!image}
+      {userTarget && <Dialog open onOpenChange={(_, data) => { if (!data.open) setUserTarget(null); }}>
+        <DialogSurface className="profile-dialog"><DialogBody>
+          <DialogTitle action={<Button appearance="subtle" icon={<DismissRegular />} aria-label="关闭个人主页" onClick={() => setUserTarget(null)} />}>个人主页</DialogTitle>
+          <DialogContent><UserProfile id={userTarget.id} name={userTarget.name} own={userTarget.id === profile.id}
+            onArticle={(id) => { setUserTarget(null); void navigate("news").then(() => openArticle(id)); }}
+            onPost={(id) => { setUserTarget(null); setCircleTarget(id); void navigate("circle"); }} /></DialogContent>
+        </DialogBody></DialogSurface>
+      </Dialog>}
+      {image && <Dialog
+        open
         onOpenChange={(_, data) => {
-          if (!data.open) setImage(null);
+          if (!data.open) closeImage();
         }}
       >
         <DialogSurface className="image-dialog">
@@ -1080,7 +1117,7 @@ export default function App() {
                   appearance="subtle"
                   icon={<DismissRegular />}
                   aria-label="关闭图片"
-                  onClick={() => setImage(null)}
+                  onClick={closeImage}
                 />
               }
             >
@@ -1089,10 +1126,11 @@ export default function App() {
             <DialogContent>
               <div className={`image-view ${zoom ? "zoomed" : ""}`}>
                 <img
-                  src={image?.display || ""}
+                  src={image.display}
                   alt="文章或评论中的图片"
                   onClick={() => setZoom(!zoom)}
-                  onError={() => setImageError(true)}
+                  onError={() => { if (image) setImageError(true); }}
+                  onLoad={() => setImageError(false)}
                 />
                 {imageLoading && <Spinner size="tiny" label="正在读取图片" />}
                 {imageError && (
@@ -1123,7 +1161,7 @@ export default function App() {
             </DialogActions>
           </DialogBody>
         </DialogSurface>
-      </Dialog>
+      </Dialog>}
       </div>
     </FluentProvider>
   );

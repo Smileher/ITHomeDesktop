@@ -18,7 +18,7 @@ try {
   [IO.File]::WriteAllText((Join-Path $stage '使用说明.txt'), $notice, [Text.UTF8Encoding]::new($false))
   $zip = Join-Path $output "ITHomeDesktop_${version}_${Architecture}_portable.zip"
   Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -Force
-  Get-ChildItem -LiteralPath "src-tauri/target/$target/release/bundle/nsis" -Filter '*.exe' | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $output "ITHomeDesktop_${version}_${Architecture}_setup.exe") -Force }
+  Get-ChildItem -LiteralPath "src-tauri/target/$target/release/bundle/nsis" -Filter "*_${version}_*-setup.exe" | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $output "ITHomeDesktop_${version}_${Architecture}_setup.exe") -Force }
   $checksums = Get-ChildItem -LiteralPath $output -File | Where-Object Extension -In '.zip','.exe' | ForEach-Object { "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)" }
   [IO.File]::WriteAllLines((Join-Path $output 'SHA256SUMS.txt'), [string[]]$checksums, [Text.UTF8Encoding]::new($false))
   Write-Output $output

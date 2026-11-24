@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Avatar, Button, Input, Spinner } from "@fluentui/react-components";
+import { Button, Input, Spinner } from "@fluentui/react-components";
 import {
   ArrowLeftRegular,
   ArrowSyncRegular,
-  ArrowUpRightRegular,
-  BookmarkRegular,
+  StarRegular,
   CommentRegular,
   DocumentRegular,
   HistoryRegular,
@@ -25,13 +24,15 @@ import { displayDate, errorText } from "../domain";
 import type { Profile } from "../types";
 import CachedImage from "./CachedImage";
 import { CommentText, DeviceSource } from "./Comments";
+import UserAvatar from "./UserAvatar";
+import UserProfile from "./UserProfile";
 
 const names: Record<AccountTab, string> = {
   home: "我的",
   comments: "我的评论",
   posts: "我的帖子",
-  favorites: "官方新闻收藏",
-  "starred-posts": "官方帖子收藏",
+  favorites: "收藏",
+  "starred-posts": "收藏",
   following: "我的关注",
   drafts: "我的草稿",
   blacklist: "黑名单管理",
@@ -44,12 +45,12 @@ export default function AccountCenter({
   onLogout,
   onSettings,
   onHistory,
-  onLocalFavorites,
   onArticle,
   onPost,
   readOnly,
   onConfirm,
   onBlacklistChanged,
+  onFavoritesChanged,
 }: {
   profile: Profile;
   tab: AccountTab;
@@ -58,12 +59,12 @@ export default function AccountCenter({
   onLogout: () => void;
   onSettings: () => void;
   onHistory: () => void;
-  onLocalFavorites: () => void;
   onArticle: (id: number) => void;
   onPost: (id: number) => void;
   readOnly: boolean;
   onConfirm: (title: string, action: () => Promise<void>) => void;
   onBlacklistChanged: () => void;
+  onFavoritesChanged: () => void;
 }) {
   const [rows, setRows] = useState<AccountRow[]>([]);
   const [page, setPage] = useState(1);
@@ -139,6 +140,7 @@ export default function AccountCenter({
     );
     await load();
     if (tab === "blacklist") onBlacklistChanged();
+    if (tab === "favorites") onFavoritesChanged();
   }
   function block() {
     const id = Number(userId);
@@ -156,7 +158,7 @@ export default function AccountCenter({
   return (
     <section className="account-page official-page">
       <div className="account-header">
-        <Avatar name={profile.nick || "家友"} size={64} />
+        <UserAvatar id={profile.id} name={profile.nick || "家友"} size={56} />
         <div>
           <h1>{profile.nick || "登录，发现更多精彩"}</h1>
           <p className="muted">
@@ -186,7 +188,7 @@ export default function AccountCenter({
         </Button>
         <Button
           appearance="subtle"
-          icon={<BookmarkRegular />}
+          icon={<StarRegular />}
           onClick={() => onTab("favorites")}
         >
           收藏
@@ -209,7 +211,6 @@ export default function AccountCenter({
               ["我的关注", <PeopleRegular />, () => onTab("following")],
               ["我的投稿", <EditRegular />, () => official("contributions")],
               ["我的草稿", <DraftsRegular />, () => onTab("drafts")],
-              ["本机收藏", <BookmarkRegular />, onLocalFavorites],
               ["黑名单", <ShieldPersonRegular />, () => onTab("blacklist")],
               ["设置", <SettingsRegular />, onSettings],
               [
@@ -240,20 +241,8 @@ export default function AccountCenter({
         </nav>
         <div className="account-content">
           {tab === "home" ? (
-            <div className="account-welcome">
-              <BookmarkRegular />
-              <h2>你的科技生活，都在这里</h2>
-              <p>查看云端收藏，继续阅读，或与家友交流。</p>
-              <p className="muted tiny">
-                足迹与草稿保存在本机；官方收藏随账号同步。
-              </p>
-              <Button
-                icon={<ArrowUpRightRegular />}
-                onClick={() => official("edit-profile")}
-              >
-                编辑官方资料
-              </Button>
-            </div>
+            profile.id ? <UserProfile id={profile.id} name={profile.nick} own onArticle={onArticle} onPost={onPost} /> :
+              <div className="account-welcome"><StarRegular /><h2>你的科技生活，都在这里</h2><p>登录后同步收藏，查看评论与帖子。</p><Button appearance="primary" onClick={onLogin}>登录账号</Button></div>
           ) : (
             <>
               <div className="account-content-heading">
@@ -269,7 +258,10 @@ export default function AccountCenter({
                   icon={<ArrowSyncRegular />}
                   aria-label="刷新账号内容"
                   disabled={loading}
-                  onClick={() => void load()}
+                  onClick={() => {
+                    void load();
+                    if (tab === "favorites") onFavoritesChanged();
+                  }}
                 />
               </div>
               {(tab === "favorites" || tab === "starred-posts") && (
@@ -343,7 +335,7 @@ export default function AccountCenter({
                     .slice(0, visible)
                     .map((row) => (
                       <article className="account-row" key={row.id}>
-                        {row.image && (
+                        {row.userId ? <UserAvatar id={row.userId} name={row.title} src={row.image} size={44} /> : row.image && (
                           <CachedImage
                             src={row.image}
                             alt=""
@@ -396,7 +388,7 @@ export default function AccountCenter({
                               >
                                 {tab === "blacklist"
                                   ? "解除屏蔽"
-                                  : "取消官方收藏"}
+                                  : "取消收藏"}
                               </Button>
                             )}
                           </div>

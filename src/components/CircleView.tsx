@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Avatar, Button, Spinner } from "@fluentui/react-components";
+import { Button, Spinner } from "@fluentui/react-components";
 import {
   ArrowLeftRegular,
   ArrowSyncRegular,
@@ -17,6 +17,7 @@ import type {
 } from "../types";
 import CachedImage from "./CachedImage";
 import { CommentText, DeviceSource } from "./Comments";
+import UserAvatar from "./UserAvatar";
 
 function PostContent({
   post,
@@ -76,11 +77,10 @@ function PostContent({
 function Identity({ post }: { post: CirclePost }) {
   return (
     <div className="circle-identity">
-      <Avatar
+      <UserAvatar
+        id={post.user?.id || 0}
         name={post.user?.userNick || "家友"}
-        image={
-          post.user?.userAvatar ? { src: post.user.userAvatar } : undefined
-        }
+        src={post.user?.userAvatar}
         size={40}
       />
       <div className="circle-person">

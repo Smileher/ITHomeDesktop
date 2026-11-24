@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Avatar, Button, Spinner, Textarea } from "@fluentui/react-components";
+import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Spinner, Textarea } from "@fluentui/react-components";
 import {
   ArrowReplyRegular,
   ArrowSyncRegular,
@@ -11,6 +11,7 @@ import type { Article, CommentsPage, DeviceTail, OfficialComment, Profile } from
 import type { CSSProperties } from "react";
 import CachedImage from "./CachedImage";
 import officialEmojis from "../emoji.json";
+import UserAvatar from "./UserAvatar";
 
 export interface DraftSnapshot {
   id: number;
@@ -132,15 +133,13 @@ function Thread({
   }
   return (
     <div className={`comment-thread ${depth ? "nested" : ""}`}>
+      <div className="comment-row">
       <div className="comment-identity">
-      <Avatar
+      <UserAvatar
+        id={comment.userInfo?.id || 0}
         name={comment.userInfo?.userNick || "家友"}
-        image={
-          comment.userInfo?.userAvatar
-            ? { src: comment.userInfo.userAvatar }
-            : undefined
-        }
-        size={depth ? 28 : 40}
+        src={comment.userInfo?.userAvatar}
+        size={depth ? 32 : 40}
       />
       {comment.userInfo?.level !== undefined && (
         <span className="comment-level">Lv.{comment.userInfo.level}</span>
@@ -158,10 +157,8 @@ function Thread({
           )}
           {comment.city && <span className="comment-city">{comment.city}</span>}
         </div>
-        {comment.replyUserInfo?.userNick && (
-          <div className="reply-to">回复 {comment.replyUserInfo.userNick}</div>
-        )}
         <div className="comment-content">
+          {comment.replyUserInfo?.userNick && <span className="reply-to">回复 {comment.replyUserInfo.userNick}：</span>}
           {comment.elements?.map((element, index) =>
             element.type === 0 ? (
               <CommentText key={index} value={element.content || ""} />
@@ -221,6 +218,10 @@ function Thread({
             回复
           </Button>
         </div>
+      </div>
+      </div>
+      {(knownChildren.length > 0 || comment.expandCount! > children.length) && (
+      <div className={depth ? "comment-reply-children" : "comment-replies"}>
         {depth < 3 &&
           knownChildren.map((child) => (
             <Thread
@@ -248,6 +249,7 @@ function Thread({
           </Button>
         )}
       </div>
+      )}
     </div>
   );
 }
@@ -262,6 +264,7 @@ export default function Comments({
   registerFlush,
   readOnly = false,
   blockedIds,
+  showComposer = true,
 }: {
   article: Article;
   profile: Profile;
@@ -272,17 +275,19 @@ export default function Comments({
   registerFlush: (flush: () => Promise<void>) => void;
   readOnly?: boolean;
   blockedIds: Set<number>;
+  showComposer?: boolean;
 }) {
   const [page, setPage] = useState<CommentsPage | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [more, setMore] = useState(false);
-  const [tab, setTab] = useState<"hot" | "new" | "earliest">("hot");
+  const [tab, setTab] = useState<"new" | "earliest">("new");
   const [reply, setReply] = useState<OfficialComment | null>(null);
   const [body, setBody] = useState("");
   const [draftStatus, setDraftStatus] = useState("");
   const [sending, setSending] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [composing, setComposing] = useState(false);
   const context = useRef(0);
   const generation = useRef(0);
   const pending = useRef<DraftSnapshot | null>(null);
@@ -291,6 +296,7 @@ export default function Comments({
   const input = useRef<HTMLTextAreaElement>(null);
   const ready = useRef(false);
   const head = useRef<HTMLDivElement>(null);
+  const loadMore = useRef<HTMLDivElement>(null);
   const flush = async () => {
     if (timer.current) clearTimeout(timer.current);
     const snapshot = pending.current;
@@ -351,6 +357,17 @@ export default function Comments({
   useEffect(() => {
     setReply(null);
   }, [article.item.id]);
+  useEffect(() => {
+    const handler = (event: Event) => {
+      if ((event as CustomEvent<number>).detail !== article.item.id) return;
+      void latestFlush.current().then(() => {
+        setReply(null);
+        setComposing(true);
+      }).catch((error) => onError(errorText(error)));
+    };
+    window.addEventListener("ithome-compose", handler);
+    return () => window.removeEventListener("ithome-compose", handler);
+  }, [article.item.id]);
   async function load(append = false) {
     const token = ++generation.current;
     setLoading(true);
@@ -371,7 +388,9 @@ export default function Comments({
           : value.comments || [],
         hotComments: append ? old?.hotComments : value.hotComments,
       }));
-      setMore((value.comments || []).length > 0);
+      setMore((value.comments || []).length > 0 && (!append || value.comments.some(
+        (comment) => !page?.comments.some((old) => old.id === comment.id),
+      )));
     } catch (e) {
       if (token === generation.current) setError(errorText(e));
     } finally {
@@ -385,6 +404,17 @@ export default function Comments({
       generation.current += 1;
     };
   }, [article.item.id, tab, refreshKey]);
+  useEffect(() => {
+    if (loading || !more || !page || !loadMore.current) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        observer.disconnect();
+        void load(true);
+      }
+    }, { rootMargin: "200px" });
+    observer.observe(loadMore.current);
+    return () => observer.disconnect();
+  }, [loading, more, page]);
   function edit(value: string) {
     setBody(value);
     setSaved(false);
@@ -405,7 +435,7 @@ export default function Comments({
     try {
       await flush();
       setReply(value);
-      input.current?.focus();
+      setComposing(true);
     } catch (e) {
       onError(errorText(e));
     }
@@ -413,6 +443,7 @@ export default function Comments({
   async function send() {
     if (readOnly) { onError("只读模式已开启，请在设置中关闭后操作"); return; }
     if (!profile.id) {
+      setComposing(false);
       onLogin();
       return;
     }
@@ -438,6 +469,7 @@ export default function Comments({
         await flush();
         setBody("");
         setReply(null);
+        setComposing(false);
       } else {
         setDraftStatus((result.message || "已提交") + " · 草稿保留");
       }
@@ -447,10 +479,7 @@ export default function Comments({
       setSending(false);
     }
   }
-  const list =
-    tab === "hot" && page?.hotComments?.length
-      ? page.hotComments
-      : page?.comments || [];
+  const list = page?.comments || [];
   const allowed = !article.item.forbidComment && (!page || page.canComment);
   return (
     <section className="comments" ref={head} aria-label="家友评论">
@@ -458,9 +487,9 @@ export default function Comments({
         <h2>家友评论</h2>
         <span className="muted tiny">{article.item.comments || ""}</span>
         <div className="push-right comment-tabs">
+          {showComposer && <Button appearance="primary" size="small" onClick={() => void changeReply(null)}>写评论</Button>}
           {(
             [
-              ["hot", "热门"],
               ["new", "最新"],
               ["earliest", "最早"],
             ] as const
@@ -494,6 +523,17 @@ export default function Comments({
         </div>
       )}
       {!page && loading && <Spinner size="tiny" label="正在读取评论" />}
+      {!!page?.hotComments?.length && (
+        <div className="hot-comments">
+          <h3 className="comment-section-title">热门评论</h3>
+          {page.hotComments.filter((comment) => !blockedIds.has(comment.userInfo?.id)).map((comment) => (
+            <Thread key={comment.id} comment={comment} article={article}
+              onReply={(value) => void changeReply(value)} onError={onError}
+              onImage={onImage} onLogin={onLogin} readOnly={readOnly} blockedIds={blockedIds} />
+          ))}
+        </div>
+      )}
+      {page && <h3 className="comment-section-title all-comments">全部评论 <span>{article.item.comments || 0}</span></h3>}
       {list.filter((comment) => !blockedIds.has(comment.userInfo?.id)).map((comment) => (
         <Thread
           key={comment.id}
@@ -510,7 +550,8 @@ export default function Comments({
       {page && !list.length && !loading && (
         <p className="empty-inline">还没有评论，来聊聊你的看法。</p>
       )}
-      {page && tab !== "hot" && more && (
+      <div ref={loadMore} className="comments-more">
+      {page && more && (
         <Button
           appearance="subtle"
           onClick={() => void load(true)}
@@ -519,12 +560,12 @@ export default function Comments({
           {loading ? "加载中…" : "加载更多评论"}
         </Button>
       )}
-      {page && tab === "hot" && !page.hotComments?.length && more && (
-        <Button appearance="subtle" onClick={() => setTab("new")}>
-          查看全部评论
-        </Button>
-      )}
-      <div className="composer">
+      </div>
+      {composing && <Dialog open onOpenChange={(_, data) => {
+        if (!data.open) void flush().then(() => setComposing(false)).catch((error) => onError(errorText(error)));
+      }}><DialogSurface className="compose-dialog"><DialogBody>
+        <DialogTitle>{reply ? `回复 ${reply.userInfo.userNick}` : "写评论"}</DialogTitle>
+        <DialogContent><div className="composer">
         {reply && (
           <div className="composer-reply">
             回复 {reply.userInfo.userNick} · {reply.floorStr}
@@ -550,6 +591,7 @@ export default function Comments({
           resize="vertical"
           appearance="outline"
           aria-label="评论草稿"
+          autoFocus
           onKeyDown={(event) => {
             if (event.ctrlKey && event.key === "Enter") {
               event.preventDefault();
@@ -571,7 +613,9 @@ export default function Comments({
             {sending ? "提交中…" : profile.id ? "发表评论" : "登录后评论"}
           </Button>
         </div>
-      </div>
+      </div></DialogContent>
+      <DialogActions><Button onClick={() => void flush().then(() => setComposing(false)).catch((error) => onError(errorText(error)))}>暂存并关闭</Button></DialogActions>
+      </DialogBody></DialogSurface></Dialog>}
     </section>
   );
 }

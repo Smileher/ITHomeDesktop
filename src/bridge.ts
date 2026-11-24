@@ -52,6 +52,10 @@ function cached<T>(data: T): Cached<T> {
   return { data, savedAt: Date.now() / 1000, stale: false };
 }
 export const backend = {
+  async user<T = Record<string, unknown>>(kind: "profile" | "comments" | "posts" | "replies", id: number, page = 1, cursor = 0): Promise<T> {
+    if (!native) throw new Error("请在桌面客户端查看用户主页");
+    return invoke("user_data", { kind, id, page, cursor });
+  },
   async account<T = Record<string, unknown>>(kind: string, page = 1, cursor = 0): Promise<T> {
     if (!native) throw new Error("请在桌面客户端登录后读取官方账号内容");
     return invoke("account_data", { kind, page, cursor });
@@ -71,7 +75,7 @@ export const backend = {
           settings: { ...defaultSettings, ...(localPreview().settings as Partial<Settings>) },
           profile: { id: 0, nick: "" },
           channel: "preview",
-          version: "0.1.3",
+          version: "0.1.4",
           warnings: [],
         };
   },
@@ -88,11 +92,12 @@ export const backend = {
     );
     const rows = data.newslist || data.Result;
     if (!Array.isArray(rows)) throw new Error("资讯响应格式已变化");
-    const pinned = Array.isArray(data.toplist) ? data.toplist.map((value) => ({ ...mapNews(value), pinned: true })) : [];
+    const isArticle = (value: Raw) => Number.isSafeInteger(Number(value.newsid)) && Number(value.newsid) > 0 && Number(value.newsid) <= 999999999;
+    const pinned = Array.isArray(data.toplist) ? data.toplist.filter(isArticle).map((value) => ({ ...mapNews(value), pinned: true })) : [];
     const seen = new Set<number>();
     return cached(
       [...pinned, ...rows
-        .filter((v) => typeof v === "object" && v && "newsid" in v)
+        .filter((v) => typeof v === "object" && v && "newsid" in v && isArticle(v))
         .map(mapNews)].filter((item) => !seen.has(item.id) && !!seen.add(item.id)),
     );
   },

@@ -28,6 +28,21 @@ fn local(window: &WebviewWindow) -> Result<()> {
     }
 }
 
+fn restrict_webview(window: &WebviewWindow) -> tauri::Result<()> {
+    #[cfg(windows)]
+    window.with_webview(|webview| unsafe {
+        let configure = || -> std::result::Result<(), _> {
+            let settings = webview.controller().CoreWebView2()?.Settings()?;
+            settings.SetAreDefaultContextMenusEnabled(false)?;
+            settings.SetAreDevToolsEnabled(false)
+        };
+        if configure().is_err() {
+            eprintln!("无法应用 WebView2 菜单设置，继续使用页面快捷键限制");
+        }
+    })?;
+    Ok(())
+}
+
 #[tauri::command]
 fn bootstrap(window: WebviewWindow, state: State<'_, AppState>) -> Result<Bootstrap> {
     local(&window)?;
@@ -68,6 +83,11 @@ async fn get_deals(
 ) -> Result<Cached<Vec<NewsItem>>> {
     local(&window)?;
     state.api.deals(refresh).await
+}
+#[tauri::command]
+async fn user_data(window: WebviewWindow, state: State<'_, AppState>, kind: String, id: u64, page: u32, cursor: u64) -> Result<Value> {
+    local(&window)?;
+    state.api.user_data(&kind, id, page, cursor).await
 }
 #[tauri::command]
 async fn account_data(window: WebviewWindow, state: State<'_, AppState>, kind: String, page: u32, cursor: u64) -> Result<Value> {
@@ -430,6 +450,8 @@ async fn open_official(
         .title("IT之家官方页面 · 由第三方客户端打开")
         .inner_size(if kind.starts_with("login-") { 460.0 } else { (size.width as f64/scale).clamp(360.0,1050.0) }, if kind.starts_with("login-") { 600.0 } else { (size.height as f64/scale).clamp(500.0,780.0) })
         .incognito(true)
+        .devtools(false)
+        .initialization_script(include_str!("window-shortcuts.js"))
         .initialization_script(include_str!("official-login.js"))
         .on_page_load(|window, payload| {
             // Only a completed official redirect wakes the local session verifier.
@@ -445,6 +467,7 @@ async fn open_official(
         })
         .build()
         .map_err(AppError::storage)?;
+    restrict_webview(&remote).map_err(AppError::storage)?;
     for cookie in state.api.auth.session()?.cookies {
         let value = tauri::webview::Cookie::build((cookie.name, cookie.value))
             .domain(cookie.domain)
@@ -539,6 +562,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            if let Some(main) = app.get_webview_window("main") {
+                restrict_webview(&main)?;
+            }
             let store = Arc::new(
                 store::Store::open(app.path().app_local_data_dir()?).map_err(|e| e.message)?,
             );
@@ -552,6 +578,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            user_data,
             account_data,
             account_action,
             validate_session,

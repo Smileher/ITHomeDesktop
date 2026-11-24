@@ -72,13 +72,11 @@ try {
   await page.locator(".detail-pane").evaluate((element) => {
     element.scrollTop = element.scrollHeight;
   });
+  await page.locator(".comments").waitFor();
+  assert.equal(await page.getByRole("textbox", { name: "评论草稿" }).count(), 0);
+  await page.locator(".toolbar-comment").click();
   await page.getByRole("textbox", { name: "评论草稿" }).waitFor();
-  const composer = await page.locator(".composer").boundingBox();
-  const floating = await page.locator(".sidebar").boundingBox();
-  assert.ok(
-    composer.y + composer.height <= floating.y + 1,
-    "Floating bar must not cover the comment composer",
-  );
+  await page.getByRole("button", { name: "暂存并关闭", exact: true }).click();
   await page.getByRole("button", { name: "我的", exact: true }).click();
   await page.locator(".mobile-account-links").waitFor();
   await page
@@ -199,20 +197,24 @@ try {
   await page
     .getByRole("heading", { name: "自动化测试：文章与评论的状态恢复" })
     .waitFor();
+  await page.locator(".toolbar-comment").click();
   await page
     .getByRole("textbox", { name: "评论草稿" })
     .fill("测试草稿：切换之后继续写。");
   await page.getByText("草稿已保存", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "暂存并关闭", exact: true }).click();
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("switch", { name: "紧凑列表" }).click();
   await page.getByText("设置已保存", { exact: true }).waitFor();
   await page.getByRole("button", { name: "资讯", exact: true }).click();
+  await page.locator(".toolbar-comment").click();
   await page.getByRole("textbox", { name: "评论草稿" }).waitFor();
   assert.equal(
     await page.getByRole("textbox", { name: "评论草稿" }).inputValue(),
     "测试草稿：切换之后继续写。",
   );
   await page.reload({ waitUntil: "domcontentloaded" });
+  await page.locator(".toolbar-comment").click();
   await page.getByRole("textbox", { name: "评论草稿" }).waitFor();
   await page.waitForFunction(
     () =>
@@ -221,12 +223,9 @@ try {
   );
   assert.equal(await page.evaluate(() => window.badScriptRan), undefined);
   assert.equal(await page.locator(".article-body script").count(), 0);
-  await page.getByRole("button", { name: "加入本机收藏" }).click();
-  await page.getByRole("button", { name: "取消本机收藏" }).waitFor();
-  await page.getByRole("button", { name: "本机收藏", exact: true }).click();
-  assert.equal(await page.locator(".news-row").count(), 1);
+  assert.equal(await page.getByRole("button", { name: "本机收藏", exact: true }).count(), 0);
   await page.getByRole("button", { name: "登录后评论", exact: true }).click();
-  await page.getByRole("dialog").waitFor();
+  await page.getByRole("dialog", { name: "登录 IT之家账号" }).waitFor();
   assert.equal(
     await page
       .getByRole("button", { name: "同步登录", exact: true })
@@ -234,20 +233,25 @@ try {
     false,
   );
   await page.getByRole("button", { name: "取消", exact: true }).click();
+  const closeComposer = page.getByRole("button", { name: "暂存并关闭", exact: true });
+  if (await closeComposer.isVisible()) await closeComposer.click();
   assert.equal(
     await page.locator(".comment-device-tail").first().innerText(),
     "ThinkBook 14",
   );
+  await page.locator(".comment-image").first().scrollIntoViewIfNeeded();
   const commentImage = page.locator(".comment-image img").first();
   await commentImage.waitFor();
   await commentImage.click();
   await page.getByRole("heading", { name: "查看图片", exact: true }).waitFor();
   assert.ok((await page.locator(".image-view img").getAttribute("src"))?.includes("comment-image.png"));
   await page.getByRole("button", { name: "关闭图片", exact: true }).click();
+  await page.waitForTimeout(400);
+  assert.equal(await page.locator(".image-dialog").count(), 0);
   report.fixtures = {
     draftSwitch: "pass",
     draftRestart: "pass",
-    favorite: "pass",
+    localFavoriteRemoved: "pass",
     settings: "pass",
     htmlSanitization: "pass",
     loginGate: "pass",

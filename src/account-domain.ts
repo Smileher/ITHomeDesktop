@@ -26,12 +26,17 @@ const object = (value: unknown): Raw =>
   value && typeof value === "object" ? (value as Raw) : {};
 const string = (value: unknown): string =>
   typeof value === "string" ? value : "";
+export function avatarUrl(id: number): string {
+  if (!Number.isSafeInteger(id) || id < 1 || id > 999999999) return "";
+  const digits = String(id).padStart(9, "0");
+  return `https://avatar.ithome.com/avatars/${digits.slice(0, 3)}/${digits.slice(3, 5)}/${digits.slice(5, 7)}/${digits.slice(7)}_60.jpg`;
+}
 function textElements(value: unknown): string {
   return Array.isArray(value)
     ? value.map((item) => string(object(item).content)).join("")
     : "";
 }
-export function accountRows(kind: AccountTab, value: unknown): AccountRow[] {
+export function accountRows(kind: AccountTab | "replies", value: unknown): AccountRow[] {
   const data = object(value);
   const rows = Array.isArray(value) ? value : data.list;
   if (!Array.isArray(rows)) throw new Error("账号列表响应格式已变化");
@@ -58,6 +63,7 @@ export function accountRows(kind: AccountTab, value: unknown): AccountRow[] {
             title: string(row.UserNick),
             text: `用户 ${Number(row.UserID)}`,
             date: string(row.AddTime),
+            image: avatarUrl(Number(row.UserID)),
           },
         ];
       if (kind === "comments") {
@@ -106,7 +112,7 @@ export function accountRows(kind: AccountTab, value: unknown): AccountRow[] {
       return [
         {
           id: Number(post.id),
-          postId: Number(post.id),
+          postId: kind === "replies" ? Number(post.contentId) || undefined : Number(post.id),
           title: string(post.title),
           text: textElements(post.contents),
           date: string(post.createTime),

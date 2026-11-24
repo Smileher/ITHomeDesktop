@@ -613,7 +613,7 @@ pub fn comment_sn(page: &str) -> Option<String> {
     }
     Some(value.into())
 }
-fn app_comment_sn(id: u64) -> Result<String> {
+pub(crate) fn app_comment_sn(id: u64) -> Result<String> {
     validate_id(id)?;
     // Public app wire format: DES/ECB with zero padding encodes a news ID.
     // It is not an account credential and does not grant authentication.

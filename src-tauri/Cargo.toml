@@ -1,6 +1,6 @@
 [package]
 name = "ithome-desktop"
-version = "0.1.3"
+version = "0.1.4"
 description = "Unofficial IT Home desktop client"
 authors = ["Smileher"]
 edition = "2021"

@@ -50,6 +50,7 @@ const report = {
   news: 0,
   circles: 0,
   accountReads: {},
+  publicUserReads: {},
   remoteIsolation: false,
   sessionAndSettingsUnchanged: false,
 };
@@ -139,6 +140,14 @@ try {
       report.accountReads[kind] = "pass";
     }
   }
+  for (const kind of ["profile", "posts", ...(boot.profile.id ? ["comments", "replies"] : [])]) {
+    const data = await call("user_data", { kind, id: 2553613, page: 1, cursor: 0 });
+    if (kind === "profile") assert.equal(typeof data.nickname, "string");
+    else assert.ok(Array.isArray(data) || Array.isArray(data.list));
+    report.publicUserReads[kind] = "pass";
+  }
+  await assert.rejects(() => call("user_data", { kind: "profile", id: 0, page: 1, cursor: 0 }));
+  await assert.rejects(() => call("user_data", { kind: "unknown", id: 1, page: 1, cursor: 0 }));
   await app.locator(".news-row").first().waitFor({ timeout: 30000 });
   await app.locator(".reader > h1").waitFor({ timeout: 30000 });
   await fs.mkdir("test-results", { recursive: true });
