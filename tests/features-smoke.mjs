@@ -66,6 +66,8 @@ try {
           },
         ],
         next: 0,
+        circleDrafts: {},
+        failCircleWrite: false,
       };
       window.__fixture = state;
       const item = {
@@ -162,6 +164,29 @@ try {
             };
           if (command === "local_items") return [];
           if (command === "get_draft") return "";
+          if (command === "get_circle_draft") return state.circleDrafts[`${args.id}:${args.reply}:${args.topic}`] || "";
+          if (command === "save_circle_draft") {
+            state.circleDrafts[`${args.id}:${args.reply}:${args.topic}`] = args.body;
+            return;
+          }
+          if (command === "message_data") {
+            if (args.kind === "unread") return { totalCount: 3 };
+            if (args.kind === "conversations") return [{ id: 1, anotherUserId: -1, summary: "系统消息测试摘要", lastTime: "2026-11-24T12:00:00", notReadMessageCount: 1, anotherUserBaseInfoModel: { id: -1, userNick: "通知测试" } }];
+            if (args.kind === "conversation") return [{ messageId: 2, fromUserId: -1, contentType: 2, systemNotifyElements: [{ type: 0, content: "通知测试正文" }], createTime: "2026-11-24T12:00:00" }];
+            if (args.kind === "news-replies") return [{ comment: comment(3, 1), news: { id: 1000, title: "界面回归测试文章" } }];
+            return { current: 1, total: 1, pageSize: 20, list: [{ id: 9, contentId: 77, user: { id: 1, userNick: "测试圈子回复" }, contents: [{ type: 0, content: "圈子回复测试" }], createTime: "2026-11-24T12:00:00" }] };
+          }
+          if (command === "get_circle") {
+            const post = { id: 77, user: { id: 1, userNick: "圈子测试家友" }, contents: [{ type: 0, content: "圈子互动测试正文" }], support: 2, voteStatus: 0, starStatus: 0, commentCount: 1, createTime: "2026-11-24T12:00:00" };
+            const data = args.kind === "detail" ? post : args.kind === "comments" ? { list: [{ ...post, id: 78, floorStr: "1楼", contents: [{ type: 0, content: "圈子评论测试" }] }], total: 1 } : { list: [{ feedType: 7, feedContent: { data: [{ id: 4030, name: "真实协议测试话题" }] } }, { feedType: 2, feedContent: post }], leftCount: 0 };
+            return { data, stale: false, savedAt: Date.now() / 1000 };
+          }
+          if (command === "circle_action") {
+            if (state.settings.readOnly) throw { message: "只读模式已开启" };
+            state.calls.push({ command, ...args });
+            if (state.failCircleWrite) throw { message: "操作结果待确认，请先刷新核对；草稿已保留，不会自动重发" };
+            return { success: true, data: {} };
+          }
           if (command === "get_drafts")
             return [
               {
@@ -230,6 +255,8 @@ try {
   );
   assert.equal(await fixture.getByRole("textbox", { name: "评论草稿" }).count(), 0);
   await fixture.locator(".toolbar-comment").click();
+  assert.equal(await fixture.getByRole("textbox", { name: "评论草稿" }).count(), 0);
+  await fixture.locator(".comments").getByRole("button", { name: "写评论", exact: true }).click();
   await fixture.getByRole("textbox", { name: "评论草稿" }).waitFor();
   await fixture.getByRole("button", { name: "暂存并关闭", exact: true }).click();
   const feedWidth = (await fixture.locator(".feed-pane").boundingBox()).width;
@@ -278,6 +305,13 @@ try {
   await fixture.locator(".account-row").nth(19).waitFor();
   await fixture.getByRole("button", { name: "加载更多", exact: true }).click();
   await fixture.locator(".account-row").nth(20).waitFor();
+  const topbar = await fixture.locator(".topbar").boundingBox();
+  assert.ok(topbar.x + topbar.width >= 1278, "Account header must cover the content width");
+  await fixture.locator(".detail-pane").evaluate((element) => { element.scrollTop = 600; });
+  const fixed = await fixture.locator(".account-shortcuts").boundingBox();
+  const scroller = await fixture.locator(".detail-pane").boundingBox();
+  assert.ok(Math.abs(fixed.y - scroller.y) <= 2, "Four account shortcuts must remain pinned");
+  await fixture.locator(".detail-pane").evaluate((element) => { element.scrollTop = 0; });
   await fixture
     .getByRole("button", { name: "取消收藏", exact: true })
     .first()
@@ -299,6 +333,56 @@ try {
   await fixture.waitForFunction(() => window.__fixture.blocks.length === 0);
   await fixture.getByRole("button", { name: "我的草稿", exact: true }).click();
   await fixture.getByText("测试草稿", { exact: true }).waitFor();
+  await fixture.getByRole("button", { name: "消息", exact: true }).click();
+  await fixture.getByText("未读 3", { exact: true }).waitFor();
+  await fixture.locator(".message-summary").click();
+  await fixture.getByText("通知测试正文", { exact: true }).waitFor();
+  await fixture.getByRole("tab", { name: "新闻回复", exact: true }).click();
+  await fixture.locator(".message-reply").waitFor();
+  await fixture.getByRole("tab", { name: "圈子回复", exact: true }).click();
+  await fixture.getByText("圈子回复测试", { exact: true }).waitFor();
+  await fixture.screenshot({ path: "test-results/messages-fixture.png" });
+  await fixture.setViewportSize({ width: 375, height: 860 });
+  assert.equal(await fixture.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
+  await fixture.screenshot({ path: "test-results/messages-mobile-fixture.png" });
+  await fixture.setViewportSize({ width: 1280, height: 860 });
+  await fixture.getByRole("button", { name: "圈子", exact: true }).click();
+  await fixture.locator(".circle-open").first().click();
+  await fixture.getByRole("button", { name: "写评论", exact: true }).waitFor();
+  await fixture.getByRole("button", { name: "点赞 2", exact: true }).click();
+  await fixture.getByRole("button", { name: "已赞 3", exact: true }).waitFor();
+  await fixture.locator(".circle-post-actions").getByRole("button", { name: "收藏", exact: true }).click();
+  await fixture.getByRole("button", { name: "已收藏", exact: true }).waitFor();
+  await fixture.locator(".circle-comment").getByRole("button", { name: "回复", exact: true }).click();
+  await fixture.getByRole("textbox", { name: "圈子草稿" }).fill("测试圈子评论草稿");
+  await fixture.getByRole("button", { name: "暂存并关闭", exact: true }).click();
+  await fixture.locator(".circle-comment").getByRole("button", { name: "回复", exact: true }).click();
+  await fixture.waitForFunction(() => document.querySelector('[aria-label="圈子草稿"]')?.value === "测试圈子评论草稿");
+  await fixture.getByRole("button", { name: "发表回复", exact: true }).click();
+  await fixture.getByRole("dialog").waitFor({ state: "hidden" });
+  assert.ok(await fixture.evaluate(() => window.__fixture.calls.some((call) => call.kind === "reply" && call.id === 77 && call.reply === 78 && call.body === "测试圈子评论草稿")));
+  await fixture.getByRole("button", { name: "发帖", exact: true }).click();
+  await fixture.getByRole("textbox", { name: "圈子草稿" }).fill("测试圈子动态草稿");
+  await fixture.evaluate(() => { window.__fixture.failCircleWrite = true; });
+  await fixture.getByRole("button", { name: "发布动态", exact: true }).click();
+  await fixture.getByRole("alert").getByText(/操作结果待确认/).waitFor();
+  assert.equal(await fixture.getByRole("textbox", { name: "圈子草稿" }).inputValue(), "测试圈子动态草稿");
+  await fixture.waitForTimeout(700);
+  assert.equal(await fixture.evaluate(() => window.__fixture.calls.filter((call) => call.kind === "post").length), 1, "Uncertain submissions must never auto retry");
+  await fixture.getByRole("button", { name: "暂存并关闭", exact: true }).click();
+  await fixture.getByRole("button", { name: "发帖", exact: true }).click();
+  await fixture.waitForFunction(() => document.querySelector('[aria-label="圈子草稿"]')?.value === "测试圈子动态草稿");
+  await fixture.setViewportSize({ width: 375, height: 860 });
+  assert.equal(await fixture.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
+  await fixture.waitForTimeout(350);
+  await fixture.screenshot({ path: "test-results/circle-compose-mobile-fixture.png" });
+  await fixture.setViewportSize({ width: 1280, height: 860 });
+  await fixture.evaluate(() => { window.__fixture.failCircleWrite = false; });
+  await fixture.waitForTimeout(350);
+  await fixture.screenshot({ path: "test-results/circle-compose-fixture.png" });
+  await fixture.getByRole("button", { name: "发布动态", exact: true }).click();
+  await fixture.getByRole("dialog").waitFor({ state: "hidden" });
+  assert.ok(await fixture.evaluate(() => window.__fixture.calls.some((call) => call.kind === "post" && call.id === 0 && call.topic === 4030)));
   await fixture
     .getByRole("button", { name: "设置", exact: true })
     .last()
@@ -315,6 +399,12 @@ try {
     await fixture.locator(".settings-sections").getByRole("button", { name, exact: false }).click();
     await fixture.screenshot({ path: 'test-results/settings-' + name + '.png' });
   }
+  const writesBeforeReadonly = await fixture.evaluate(() => window.__fixture.calls.filter((call) => call.command === "circle_action").length);
+  await fixture.getByRole("button", { name: "圈子", exact: true }).click();
+  assert.equal(await fixture.getByRole("button", { name: "发帖", exact: true }).isDisabled(), true);
+  await fixture.locator(".circle-open").first().click();
+  assert.equal(await fixture.getByRole("button", { name: "写评论", exact: true }).isDisabled(), true);
+  assert.equal(await fixture.evaluate(() => window.__fixture.calls.filter((call) => call.command === "circle_action").length), writesBeforeReadonly);
   await fixture.getByRole("button", { name: "我的", exact: true }).click();
   await fixture.getByRole("button", { name: "返回账号首页" }).click();
   await fixture.screenshot({ path: "test-results/account-desktop.png" });
@@ -350,6 +440,10 @@ try {
     clearReader: "pass",
     qrAutoSync: "pass",
     mobileNavigationHeight: nav.height,
+    stickyAccountShortcuts: "pass",
+    messagesAndSystemConversations: "pass",
+    circleWriteIdentityAndDraftRecovery: "pass",
+    uncertainCircleSubmissionNoAutoRetry: "pass",
   };
   await fixture.close();
 

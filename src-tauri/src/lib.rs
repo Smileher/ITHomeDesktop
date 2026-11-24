@@ -1,6 +1,7 @@
 mod api;
 mod account;
 mod auth;
+mod community;
 mod error;
 mod models;
 mod store;
@@ -15,6 +16,13 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, Webvi
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
+#[cfg(windows)]
+use windows_core::Interface;
+#[cfg(windows)]
+use webview2_com::Microsoft::Web::WebView2::Win32::{
+    ICoreWebView2_19, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
+    COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+};
 
 struct AppState {
     api: Arc<Api>,
@@ -38,6 +46,25 @@ fn restrict_webview(window: &WebviewWindow) -> tauri::Result<()> {
         };
         if configure().is_err() {
             eprintln!("无法应用 WebView2 菜单设置，继续使用页面快捷键限制");
+        }
+        // Low asks WebView2 to discard caches more eagerly; it is not a RAM cap.
+        // QueryInterface keeps older runtimes compatible. Debug builds allow a
+        // normal-policy benchmark using exactly the same executable and UI.
+        if let Ok(core) = webview.controller().CoreWebView2() {
+            if let Ok(memory) = core.cast::<ICoreWebView2_19>() {
+                let target = COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW;
+                #[cfg(debug_assertions)]
+                let target = if std::env::var("ITHOME_MEMORY_POLICY").as_deref() == Ok("normal") {
+                    COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+                } else { target };
+                let mut actual = COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL;
+                if memory.SetMemoryUsageTargetLevel(target).is_ok()
+                    && memory.MemoryUsageTargetLevel(&mut actual).is_ok()
+                {
+                    #[cfg(debug_assertions)]
+                    eprintln!("ITHome WebView memory target: {}", actual.0);
+                }
+            }
         }
     })?;
     Ok(())
@@ -83,6 +110,16 @@ async fn get_deals(
 ) -> Result<Cached<Vec<NewsItem>>> {
     local(&window)?;
     state.api.deals(refresh).await
+}
+#[tauri::command]
+async fn message_data(window: WebviewWindow, state: State<'_, AppState>, kind: String, id: i32, page: u32, cursor: u64, stamp: String) -> Result<Value> {
+    local(&window)?;
+    state.api.message_data(&kind, id, page, cursor, &stamp).await
+}
+#[tauri::command]
+async fn circle_action(window: WebviewWindow, state: State<'_, AppState>, kind: String, id: u64, reply: u64, topic: u64, body: String, enabled: bool) -> Result<Value> {
+    local(&window)?;
+    state.api.circle_action(&kind, id, reply, topic, &body, enabled).await
 }
 #[tauri::command]
 async fn user_data(window: WebviewWindow, state: State<'_, AppState>, kind: String, id: u64, page: u32, cursor: u64) -> Result<Value> {
@@ -230,6 +267,24 @@ fn get_drafts(window: WebviewWindow, state: State<'_, AppState>) -> Result<Vec<V
     state.api.store.drafts(&state.api.auth.scope()?)
 }
 #[tauri::command]
+fn get_circle_draft(window: WebviewWindow, state: State<'_, AppState>, id: u64, reply: u64, topic: u64) -> Result<String> {
+    local(&window)?;
+    state.api.store.item(&state.api.auth.scope()?, "circle-draft", &format!("{id}:{reply}:{topic}"))?
+        .map(|v| serde_json::from_str(&v).map_err(AppError::storage)).unwrap_or(Ok(String::new()))
+}
+#[tauri::command]
+fn save_circle_draft(window: WebviewWindow, state: State<'_, AppState>, id: u64, reply: u64, topic: u64, body: String, account: u64) -> Result<()> {
+    local(&window)?;
+    if state.api.auth.profile()?.id != account {
+        return Err(AppError::new("session_changed", "账号已变化，草稿未写入其他账号"));
+    }
+    if body.len() > 100_000 { return Err(AppError::new("validation", "草稿过长")); }
+    let scope = format!("user:{account}");
+    let key = format!("{id}:{reply}:{topic}");
+    if body.is_empty() { state.api.store.delete_item(&scope, "circle-draft", &key) }
+    else { state.api.store.put_item(&scope, "circle-draft", &key, &body) }
+}
+#[tauri::command]
 fn get_draft(
     window: WebviewWindow,
     state: State<'_, AppState>,
@@ -334,7 +389,7 @@ async fn clear_data(window: WebviewWindow, state: State<'_, AppState>, kind: Str
     tokio::task::spawn_blocking(move || match kind.as_str() {
         "cache" => store.trim_cache(0, true),
         "history" => store.clear_kind("local", "history"),
-        "draft" => store.clear_kind(&scope, "draft"),
+        "draft" => { store.clear_kind(&scope, "draft")?; store.clear_kind(&scope, "circle-draft") },
         _ => Err(AppError::new("validation", "不支持的数据清理类型")),
     })
     .await
@@ -578,6 +633,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            message_data,
+            circle_action,
             user_data,
             account_data,
             account_action,
@@ -596,6 +653,8 @@ pub fn run() {
             toggle_favorite,
             get_draft,
             get_drafts,
+            get_circle_draft,
+            save_circle_draft,
             save_draft,
             save_settings,
             reset_settings,

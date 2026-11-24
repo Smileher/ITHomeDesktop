@@ -52,6 +52,22 @@ function cached<T>(data: T): Cached<T> {
   return { data, savedAt: Date.now() / 1000, stale: false };
 }
 export const backend = {
+  async messages<T>(kind: "conversations" | "unread" | "conversation" | "news-replies" | "circle-replies", id = 0, page = 1, cursor = 0, stamp = ""): Promise<T> {
+    if (!native) throw new Error("请在桌面客户端登录后查看消息");
+    return invoke("message_data", { kind, id, page, cursor, stamp });
+  },
+  async circleAction(kind: "post" | "reply" | "vote-post" | "vote-comment" | "favorite", id: number, reply = 0, topic = 0, body = "", enabled = true): Promise<Record<string, unknown>> {
+    if (!native) throw new Error("请在桌面客户端登录后操作");
+    return invoke("circle_action", { kind, id, reply, topic, body, enabled });
+  },
+  async circleDraft(id: number, reply: number, topic: number): Promise<string> {
+    if (!native) return "";
+    return invoke("get_circle_draft", { id, reply, topic });
+  },
+  async saveCircleDraft(id: number, reply: number, topic: number, body: string, account: number): Promise<void> {
+    if (!native) throw new Error("请在桌面客户端保存圈子草稿");
+    return invoke("save_circle_draft", { id, reply, topic, body, account });
+  },
   async user<T = Record<string, unknown>>(kind: "profile" | "comments" | "posts" | "replies", id: number, page = 1, cursor = 0): Promise<T> {
     if (!native) throw new Error("请在桌面客户端查看用户主页");
     return invoke("user_data", { kind, id, page, cursor });
@@ -75,7 +91,7 @@ export const backend = {
           settings: { ...defaultSettings, ...(localPreview().settings as Partial<Settings>) },
           profile: { id: 0, nick: "" },
           channel: "preview",
-          version: "0.1.4",
+          version: "0.1.5",
           warnings: [],
         };
   },

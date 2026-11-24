@@ -357,17 +357,6 @@ export default function Comments({
   useEffect(() => {
     setReply(null);
   }, [article.item.id]);
-  useEffect(() => {
-    const handler = (event: Event) => {
-      if ((event as CustomEvent<number>).detail !== article.item.id) return;
-      void latestFlush.current().then(() => {
-        setReply(null);
-        setComposing(true);
-      }).catch((error) => onError(errorText(error)));
-    };
-    window.addEventListener("ithome-compose", handler);
-    return () => window.removeEventListener("ithome-compose", handler);
-  }, [article.item.id]);
   async function load(append = false) {
     const token = ++generation.current;
     setLoading(true);

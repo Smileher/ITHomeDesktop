@@ -832,3 +832,75 @@
   .app .reader { padding-bottom: 95px; }
   .profile-dialog { width: calc(100vw - 18px) !important; padding: 16px !important; }
 }
+/* Full-page headers and an account navigation strip that stays in view. */
+@media (min-width:851px) {
+  .app:has(.settings-page) .topbar, .app:has(.circle-page) .topbar, .app:has(.official-page) .topbar {
+    max-width: none; width: auto; justify-self: stretch; background: var(--canvas); border-bottom: 1px solid var(--border); padding: 12px 28px;
+  }
+  .app:has(.settings-page) .global-search, .app:has(.circle-page) .global-search, .app:has(.official-page) .global-search { flex: 0 1 560px; }
+  .app:has(.official-page) .top-actions, .app:has(.settings-page) .top-actions, .app:has(.circle-page) .top-actions { margin-left: auto; }
+}
+.app .message-page { width: 100%; max-width: 1120px; margin: 0 auto; padding: 22px 28px 90px; }
+.app .message-heading { display: flex; align-items: center; gap: 14px; padding-bottom: 18px; }
+.app .message-heading h1 { font-size: 24px; margin: 0; }
+.app .message-heading > button { margin-left: auto; }
+.app .message-tabs { position: sticky; top: 0; z-index: 3; display: flex; gap: 24px; background: var(--paper); border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.app .message-tabs > button { padding: 14px 2px; background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--muted); font: inherit; cursor: pointer; }
+.app .message-tabs > button[aria-selected=true] { border-bottom-color: var(--accent); color: var(--accent); }
+.app .message-conversation { display: flex; gap: 14px; align-items: center; padding: 18px 0; border-bottom: 1px solid var(--border); }
+.app .message-summary { display: flex; flex-direction: column; flex: 1; gap: 6px; min-width: 0; text-align: left; font: inherit; color: var(--ink); border: 0; background: transparent; padding: 0; cursor: pointer; }
+.app .message-summary > span { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; font-size: 14px; }
+.app .message-date { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; font-size: 12px; color: var(--muted); }
+.app .message-date b { background: var(--accent); color: white; padding: 1px 7px; border-radius: 12px; font-size: 11px; }
+.app .message-detail-heading { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+.app .message-item { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px 0; }
+.app .message-item.self { align-items: flex-end; }
+.app .message-copy { max-width: min(700px,90%); background: var(--hover); padding: 13px 16px; border-radius: 8px; font-size: 16px; line-height: 1.7; overflow-wrap: anywhere; }
+.app .message-item.self .message-copy { background: var(--accent-soft); }
+.app .message-link { border: 0; background: transparent; color: var(--accent); padding: 0; text-align: left; font: inherit; cursor: pointer; }
+.app .message-reply { display: flex; gap: 14px; padding: 20px 0; border-bottom: 1px solid var(--border); }
+.app .message-reply > div { min-width: 0; flex: 1; }
+.app .message-reply .comment-content { margin: 12px 0 8px; font-size: 17px; }
+.app .message-reply .comment-meta { margin-top: 5px; }
+.app .message-reply .fui-Button { max-width: 100%; height: auto; text-align: left; }
+.app .message-image { display: block; width: min(320px,100%); height: 210px; }
+.app .message-note { margin-top: 24px; }
+.app .circle-post-actions { display: flex; gap: 12px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin: 22px 0 12px; padding: 8px 0; }
+.app .circle-heading > button + button { margin-left: 0; }
+.app .circle-post-actions [aria-pressed=true], .app .circle-counts [aria-pressed=true] { color: var(--accent); }
+.circle-topic-select { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; font-size: 14px; }
+.circle-topic-select select { min-width: 0; flex: 1; background: var(--paper); color: var(--ink); padding: 8px; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+@media(max-width:600px) {
+  .app .message-page { padding: 18px 16px 95px; }
+  .app .message-tabs { gap: 22px; font-size: 14px; }
+  .app .message-reply { gap: 12px; }
+  .app .circle-heading { gap: 8px; }
+  .app .circle-heading h1 { flex: 1; min-width: 0; }
+  .app .circle-heading > .muted { display: none; }
+}
+.app .account-page { padding-top: 20px; max-width: 1360px; }
+.app .account-header { gap: 16px; padding: 0 0 20px; }
+.app .account-header > div { flex: 1; min-width: 0; }
+.app .account-header h1 { font-size: 22px; }
+.app .account-header p { margin: 4px 0 0; }
+.app .account-header > button:not(.user-avatar) { min-width: 84px; border: 1px solid var(--border); background: var(--paper); border-radius: 7px; }
+.app .account-shortcuts.mobile-account-links { position: sticky; top: 0; z-index: 3; padding: 5px 0; margin: 0 0 20px; border: 0; border-bottom: 1px solid var(--border); background: var(--canvas); border-radius: 0; gap: 6px; }
+.app .account-shortcuts > button { flex-direction: row; min-height: 46px; gap: 9px; font-weight: 500; font-size: 14px; border-radius: 7px; }
+.app .account-shortcuts .fui-Button__icon, .app .account-shortcuts .fui-Button__icon svg { width: 23px; height: 23px; }
+.app .account-shortcuts > button[aria-pressed=true] { background: var(--accent-soft); color: var(--accent); }
+.app .account-menu { border: 0; padding: 0; background: transparent; }
+.app .account-menu > button { min-height: 44px; }
+.app .account-menu > button:hover { background: var(--paper); }
+.app .account-content { padding: 18px 20px; }
+.app .account-content > p { margin: 6px 0 12px; font-size: 12px; line-height: 1.6; }
+.app .blacklist-controls { margin: 12px 0 5px; }
+.app .blacklist-controls > span:first-child { max-width: 340px; }
+.app .blacklist-controls > span:nth-child(2) { max-width: 210px; }
+.app .account-row { padding: 12px 0; }
+@media(max-width:600px) {
+  .app .account-page { padding-top: 14px; }
+  .app .account-shortcuts.mobile-account-links { padding: 5px 0; gap: 3px; }
+  .app .account-shortcuts > button { min-height: 48px; gap: 5px; font-size: 12px; }
+  .app .account-shortcuts .fui-Button__icon, .app .account-shortcuts .fui-Button__icon svg { width: 20px; height: 20px; }
+  .app .account-content { padding: 14px; }
+}

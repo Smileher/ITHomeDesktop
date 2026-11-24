@@ -8,6 +8,7 @@ export type AccountTab =
   | "starred-posts"
   | "following"
   | "drafts"
+  | "history"
   | "blacklist";
 export interface AccountRow {
   id: number | string;
@@ -43,6 +44,7 @@ export function accountRows(kind: AccountTab | "replies", value: unknown): Accou
   return rows
     .flatMap<AccountRow>((item) => {
       const row = object(item);
+      if (kind === "history") return [{ id: Number(row.id), newsId: Number(row.id), title: string(row.title), text: "", date: string(row.date), image: string(row.image) }];
       if (kind === "favorites")
         return [
           {

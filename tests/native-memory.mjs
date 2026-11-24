@@ -22,19 +22,24 @@ const port = await new Promise((resolve) => {
   const server = net.createServer();
   server.listen(0, "127.0.0.1", () => { const port = server.address().port; server.close(() => resolve(port)); });
 });
-const child = spawn(executable, [], { windowsHide: true, stdio: "ignore", env: {
+const child = spawn(executable, [], { windowsHide: true, stdio: ["ignore", "ignore", "pipe"], env: {
   ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-allow-origins=*`,
 } });
 const report = { executable: path.basename(executable), articleIds: ids, metric: "process-tree private working set MB; sampled after each reading step", samples: [], sessionAndSettingsUnchanged: false };
+child.stderr.on("data", (chunk) => {
+  const target = String(chunk).match(/ITHome WebView memory target: (\d+)/);
+  if (target) report.confirmedMemoryTarget = Number(target[1]);
+});
 let browser;
 async function sample(stage, page) {
-  const command = `$taskRoot=${child.pid};$all=Get-CimInstance Win32_Process;$ids=@($taskRoot);for($i=0;$i -lt $ids.Count;$i++){ $ids+=@($all|Where-Object ParentProcessId -eq $ids[$i]|Select-Object -ExpandProperty ProcessId) };$perf=Get-CimInstance Win32_PerfFormattedData_PerfProc_Process|Where-Object {$_.IDProcess -in $ids};[pscustomobject]@{privateMb=[math]::Round((($perf|Measure-Object WorkingSetPrivate -Sum).Sum/1MB),1);workingMb=[math]::Round((($perf|Measure-Object WorkingSet -Sum).Sum/1MB),1);processes=@($perf|ForEach-Object {$p=$all|Where-Object ProcessId -eq $_.IDProcess;$role=if($p.CommandLine -match '--type=([^ ]+)'){$Matches[1]}else{$_.Name};[pscustomobject]@{role=$role;privateMb=[math]::Round($_.WorkingSetPrivate/1MB,1)}})}|ConvertTo-Json -Compress -Depth 4`;
+  const command = `$taskRoot=${child.pid};$all=Get-CimInstance Win32_Process;$ids=@($taskRoot);for($i=0;$i -lt $ids.Count;$i++){ $ids+=@($all|Where-Object ParentProcessId -eq $ids[$i]|Select-Object -ExpandProperty ProcessId) };$perf=Get-CimInstance Win32_PerfFormattedData_PerfProc_Process|Where-Object {$_.IDProcess -in $ids};[pscustomobject]@{privateMb=[math]::Round((($perf|Measure-Object WorkingSetPrivate -Sum).Sum/1MB),1);committedMb=[math]::Round((($perf|Measure-Object PrivateBytes -Sum).Sum/1MB),1);workingMb=[math]::Round((($perf|Measure-Object WorkingSet -Sum).Sum/1MB),1);processes=@($perf|ForEach-Object {$p=$all|Where-Object ProcessId -eq $_.IDProcess;$role=if($p.CommandLine -match '--type=([^ ]+)'){$Matches[1]}else{$_.Name};[pscustomobject]@{role=$role;privateMb=[math]::Round($_.WorkingSetPrivate/1MB,1)}})}|ConvertTo-Json -Compress -Depth 4`;
   const measured = spawnSync("pwsh", ["-NoProfile", "-Command", command], { encoding: "utf8", windowsHide: true });
   assert.equal(measured.status, 0, measured.stderr);
   const renderer = await page.evaluate(() => ({
     heapMb: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null,
     imageSources: [...document.images].filter((image) => image.getAttribute("src")).length,
     blobImages: [...document.images].filter((image) => image.src.startsWith("blob:")).length,
+    scrollFrames: window.__memoryFrames?.result || null,
   }));
   const result = { stage, ...JSON.parse(measured.stdout), ...renderer };
   report.samples.push(result);
@@ -68,10 +73,27 @@ try {
     await page.locator(".global-search input").press("Enter");
     await page.waitForFunction((old) => { const title = document.querySelector(".reader h1"); return title && title.textContent !== old; }, old, { timeout: 30000 });
     await page.waitForTimeout(1600);
+    await page.evaluate(() => {
+      const state = { active: true, last: 0, intervals: [], result: null };
+      window.__memoryFrames = state;
+      function frame(time) {
+        if (!state.active) return;
+        if (state.last) state.intervals.push(time - state.last);
+        state.last = time;
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    });
     for (let step = 0; step < 6; step++) {
       await page.locator(".detail-pane").evaluate((element) => { element.scrollTop += 600; });
       await page.waitForTimeout(300);
     }
+    await page.evaluate(() => {
+      const state = window.__memoryFrames;
+      state.active = false;
+      const sorted = state.intervals.sort((a, b) => a - b);
+      state.result = { frames: sorted.length, p95Ms: Math.round((sorted[Math.floor(sorted.length * 0.95)] || 0) * 10) / 10, over50Ms: sorted.filter((value) => value > 50).length };
+    });
     await sample(`read-${id}`, page);
   }
   await page.getByRole("button", { name: "资讯", exact: true }).click();

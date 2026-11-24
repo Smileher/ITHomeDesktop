@@ -35,6 +35,7 @@ const names: Record<AccountTab, string> = {
   "starred-posts": "收藏",
   following: "我的关注",
   drafts: "我的草稿",
+  history: "足迹",
   blacklist: "黑名单管理",
 };
 export default function AccountCenter({
@@ -44,7 +45,6 @@ export default function AccountCenter({
   onLogin,
   onLogout,
   onSettings,
-  onHistory,
   onArticle,
   onPost,
   readOnly,
@@ -58,7 +58,6 @@ export default function AccountCenter({
   onLogin: () => void;
   onLogout: () => void;
   onSettings: () => void;
-  onHistory: () => void;
   onArticle: (id: number) => void;
   onPost: (id: number) => void;
   readOnly: boolean;
@@ -82,7 +81,7 @@ export default function AccountCenter({
     try {
       const next = append ? page + 1 : 1;
       const data =
-        tab === "drafts"
+        tab === "history" ? await backend.items("history") : tab === "drafts"
           ? await backend.drafts()
           : await backend.account(
               tab,
@@ -104,7 +103,7 @@ export default function AccountCenter({
       const metadata = Array.isArray(data) ? {} : data;
       const total = Number(metadata.total);
       setMore(
-        !["blacklist", "drafts"].includes(tab) &&
+        !["blacklist", "drafts", "history"].includes(tab) &&
           incoming.length > 0 &&
           (Number.isFinite(total)
             ? next * Number(metadata.pageSize || 20) < total
@@ -121,7 +120,7 @@ export default function AccountCenter({
     setFilter("");
     setError("");
     setVisible(80);
-    if (tab !== "home" && (profile.id || tab === "drafts")) void load();
+    if (tab !== "home" && (profile.id || ["drafts", "history"].includes(tab))) void load();
     return () => {
       generation.current += 1;
     };
@@ -166,15 +165,14 @@ export default function AccountCenter({
               ? "IT之家官方账号已连接"
               : "同步官方收藏、评论和圈子内容"}
           </p>
-          <Button appearance="primary" onClick={onLogin}>
-            {profile.id ? "重新授权" : "登录 / 注册"}
-          </Button>
         </div>
+        <Button appearance="subtle" onClick={onLogin}>{profile.id ? "重新授权" : "登录 / 注册"}</Button>
       </div>
       <div className="account-shortcuts mobile-account-links">
         <Button
           appearance="subtle"
           icon={<CommentRegular />}
+          aria-pressed={tab === "comments"}
           onClick={() => onTab("comments")}
         >
           评论
@@ -182,6 +180,7 @@ export default function AccountCenter({
         <Button
           appearance="subtle"
           icon={<DocumentRegular />}
+          aria-pressed={tab === "posts"}
           onClick={() => onTab("posts")}
         >
           帖子
@@ -189,6 +188,7 @@ export default function AccountCenter({
         <Button
           appearance="subtle"
           icon={<StarRegular />}
+          aria-pressed={tab === "favorites" || tab === "starred-posts"}
           onClick={() => onTab("favorites")}
         >
           收藏
@@ -196,7 +196,8 @@ export default function AccountCenter({
         <Button
           appearance="subtle"
           icon={<HistoryRegular />}
-          onClick={onHistory}
+          aria-pressed={tab === "history"}
+          onClick={() => onTab("history")}
         >
           足迹
         </Button>
@@ -280,7 +281,7 @@ export default function AccountCenter({
                   </button>
                 </div>
               )}
-              {!profile.id && tab !== "drafts" ? (
+              {!profile.id && !["drafts", "history"].includes(tab) ? (
                 <div className="empty-state">
                   <p>登录后读取官方账号内容</p>
                   <Button appearance="primary" onClick={onLogin}>

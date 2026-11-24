@@ -117,6 +117,9 @@ export interface CircleUser {
 }
 export interface CirclePost {
   id: number;
+  contentId?: number;
+  voteStatus?: number;
+  starStatus?: number;
   title?: string;
   user: CircleUser;
   createTime: string;

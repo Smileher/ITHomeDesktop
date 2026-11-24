@@ -51,6 +51,7 @@ const report = {
   circles: 0,
   accountReads: {},
   publicUserReads: {},
+  messageReads: {},
   remoteIsolation: false,
   sessionAndSettingsUnchanged: false,
 };
@@ -127,6 +128,20 @@ try {
   });
   assert.ok(Array.isArray(comments.data.list));
   if (boot.profile.id) {
+    for (const kind of ["unread", "conversations", "news-replies", "circle-replies"]) {
+      const data = await call("message_data", { kind, id: 0, page: 1, cursor: 0, stamp: "" });
+      if (kind === "unread") assert.equal(typeof data.totalCount, "number");
+      else assert.ok(Array.isArray(data) || Array.isArray(data.list));
+      report.messageReads[kind] = "pass";
+      if (kind === "conversations") {
+        const conversation = data.find((item) => Number.isInteger(item.anotherUserId) && item.anotherUserId !== 0);
+        if (conversation) {
+          const messages = await call("message_data", { kind: "conversation", id: conversation.anotherUserId, page: 1, cursor: 0, stamp: "" });
+          assert.ok(Array.isArray(messages));
+          report.messageReads.conversation = "pass";
+        }
+      }
+    }
     for (const kind of [
       "favorites",
       "blacklist",
@@ -148,6 +163,7 @@ try {
   }
   await assert.rejects(() => call("user_data", { kind: "profile", id: 0, page: 1, cursor: 0 }));
   await assert.rejects(() => call("user_data", { kind: "unknown", id: 1, page: 1, cursor: 0 }));
+  await assert.rejects(() => call("message_data", { kind: "unknown", id: 0, page: 1, cursor: 0, stamp: "" }));
   await app.locator(".news-row").first().waitFor({ timeout: 30000 });
   await app.locator(".reader > h1").waitFor({ timeout: 30000 });
   await fs.mkdir("test-results", { recursive: true });

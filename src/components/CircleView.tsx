@@ -5,6 +5,8 @@ import {
   ArrowSyncRegular,
   CommentRegular,
   ThumbLikeRegular,
+  EditRegular,
+  StarRegular,
 } from "@fluentui/react-icons";
 import { backend } from "../bridge";
 import { displayDate, errorText } from "../domain";
@@ -14,10 +16,12 @@ import type {
   CirclePage,
   CirclePost,
   CircleTopic,
+  Profile,
 } from "../types";
 import CachedImage from "./CachedImage";
 import { CommentText, DeviceSource } from "./Comments";
 import UserAvatar from "./UserAvatar";
+import CircleComposer from "./CircleComposer";
 
 function PostContent({
   post,
@@ -112,11 +116,19 @@ function CircleReply({
   contentId,
   onImage,
   blockedIds,
+  onReply,
+  onVote,
+  actionBusy,
+  readOnly,
 }: {
   post: CirclePost;
   contentId: number;
   onImage: (source: string, display?: string) => void;
   blockedIds: Set<number>;
+  onReply: (post: CirclePost) => void;
+  onVote: (post: CirclePost) => void;
+  actionBusy: boolean;
+  readOnly: boolean;
 }) {
   const [replies, setReplies] = useState(post.replyComments || []);
   const [busy, setBusy] = useState(false);
@@ -148,7 +160,8 @@ function CircleReply({
       )}
       <PostContent post={post} onImage={onImage} />
       <div className="circle-counts muted tiny">
-        <ThumbLikeRegular /> {post.support || 0}
+        <Button size="small" appearance="subtle" icon={<ThumbLikeRegular />} aria-label={`点赞评论 ${post.id}`} aria-pressed={post.voteStatus === 1} disabled={actionBusy || readOnly} onClick={() => onVote(post)}>{post.support || 0}</Button>
+        <Button size="small" appearance="subtle" disabled={actionBusy || readOnly} onClick={() => onReply(post)}>回复</Button>
       </div>
       {replies
         .filter((reply) => !blockedIds.has(reply.user?.id))
@@ -156,6 +169,7 @@ function CircleReply({
           <div className="circle-reply" key={reply.id}>
             <Identity post={reply} />
             <PostContent post={reply} onImage={onImage} />
+            <div className="circle-counts"><Button appearance="subtle" size="small" disabled={actionBusy || readOnly} onClick={() => onReply(reply)}>回复 {reply.user?.userNick}</Button></div>
           </div>
         ))}
       {(post.replyCount || 0) > replies.length && (
@@ -179,10 +193,18 @@ export default function CircleView({
   onImage,
   initialId = 0,
   blockedIds,
+  profile,
+  readOnly,
+  onLogin,
+  registerFlush,
 }: {
   onImage: (source: string, display?: string) => void;
   initialId?: number;
   blockedIds: Set<number>;
+  profile: Profile;
+  readOnly: boolean;
+  onLogin: () => void;
+  registerFlush: (flush: () => Promise<void>) => void;
 }) {
   const [tab, setTab] = useState<"latest" | "recommend">("latest");
   const [menu, setMenu] = useState(2000000002);
@@ -203,10 +225,37 @@ export default function CircleView({
   const [error, setError] = useState("");
   const [commentError, setCommentError] = useState("");
   const [offline, setOffline] = useState(false);
+  const [compose, setCompose] = useState<{ id: number; reply: number; name: string } | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const actionPending = useRef(false);
   const generation = useRef(0);
   const detailGeneration = useRef(0);
   const commentGeneration = useRef(0);
   const scroll = useRef<HTMLDivElement>(null);
+  function startCompose(post?: CirclePost) {
+    if (readOnly) { setError("只读模式已开启，请在设置中关闭后操作"); return; }
+    if (!profile.id) { onLogin(); return; }
+    setCompose({ id: selected?.id || 0, reply: post?.id || 0, name: post?.user?.userNick || "" });
+  }
+  async function interact(kind: "vote-post" | "vote-comment" | "favorite", post: CirclePost) {
+    if (readOnly || actionPending.current) return;
+    if (!profile.id) { onLogin(); return; }
+    actionPending.current = true; setActionBusy(true); setError("");
+    const token = detailGeneration.current;
+    const enabled = kind === "favorite" ? post.starStatus !== 1 : post.voteStatus !== 1;
+    try {
+      await backend.circleAction(kind, post.id, 0, 0, "", enabled);
+      if (token !== detailGeneration.current) return;
+      // Apply only confirmed writes. Reloads read the account's official state.
+      const update = (value: CirclePost) => value.id !== post.id ? value : {
+        ...value,
+        ...(kind === "favorite" ? { starStatus: enabled ? 1 : 0 } : { voteStatus: enabled ? 1 : 0, support: Math.max(0, (value.support || 0) + (enabled ? 1 : -1)) }),
+      };
+      if (kind === "vote-comment") setComments((old) => old.map(update));
+      else { setSelected((old) => old ? update(old) : old); setPosts((old) => old.map(update)); }
+    } catch (e) { if (token === detailGeneration.current) setError(errorText(e)); }
+    finally { actionPending.current = false; setActionBusy(false); }
+  }
   async function load(append = false, refresh = false) {
     const token = ++generation.current;
     setLoading(true);
@@ -362,6 +411,10 @@ export default function CircleView({
       <header className="circle-heading">
         <h1>{topic?.name || "圈子"}</h1>
         <span className="muted tiny">{offline ? "离线缓存" : "公开圈子"}</span>
+        <Button icon={<EditRegular />} appearance="primary" disabled={readOnly || actionBusy} onClick={() => {
+          if (!profile.id) { onLogin(); return; }
+          setCompose({ id: 0, reply: 0, name: "" });
+        }}>发帖</Button>
         <Button
           appearance="subtle"
           icon={<ArrowSyncRegular />}
@@ -518,8 +571,14 @@ export default function CircleView({
                 <span className="muted tiny">帖子详情</span>
               </header>
               <div className="circle-reading">
+                {error && <p className="inline-error" role="alert">{error}</p>}
                 <Identity post={selected} />
                 <PostContent post={selected} onImage={onImage} />
+                <div className="circle-post-actions">
+                  <Button appearance="subtle" icon={<ThumbLikeRegular />} aria-pressed={selected.voteStatus === 1} disabled={actionBusy || readOnly || detailLoading} onClick={() => void interact("vote-post", selected)}>{selected.voteStatus === 1 ? "已赞" : "点赞"} {selected.support || 0}</Button>
+                  <Button appearance="subtle" icon={<StarRegular />} aria-pressed={selected.starStatus === 1} disabled={actionBusy || readOnly || detailLoading} onClick={() => void interact("favorite", selected)}>{selected.starStatus === 1 ? "已收藏" : "收藏"}</Button>
+                  <Button appearance="subtle" icon={<CommentRegular />} disabled={actionBusy || readOnly || detailLoading} onClick={() => startCompose()}>写评论</Button>
+                </div>
                 {detailLoading && (
                   <Spinner size="tiny" label="正在读取完整帖子" />
                 )}
@@ -559,6 +618,10 @@ export default function CircleView({
                       contentId={selected.id}
                       onImage={onImage}
                       blockedIds={blockedIds}
+                      onReply={startCompose}
+                      onVote={(post) => void interact("vote-comment", post)}
+                      actionBusy={actionBusy}
+                      readOnly={readOnly}
                     />
                   ))}
                 {commentsLoading && (
@@ -577,7 +640,7 @@ export default function CircleView({
                   <p className="empty-inline">还没有公开评论。</p>
                 )}
                 <p className="muted tiny circle-readonly">
-                  圈子目前支持公开浏览，发帖和互动请使用官方客户端。
+                  {readOnly ? "只读模式已开启" : "发帖与互动同步至官方服务，以官方审核结果为准。"}
                 </p>
               </div>
             </>
@@ -590,6 +653,8 @@ export default function CircleView({
           )}
         </div>
       </div>
+      {compose && <CircleComposer key={`${profile.id}:${compose.id}:${compose.reply}`} {...compose} account={profile.id} readOnly={readOnly} topics={topic ? [topic, ...topics.filter((item) => item.id !== topic.id)] : topics} initialTopic={topic?.id || 0}
+        registerFlush={registerFlush} onClose={() => setCompose(null)} onSent={() => { if (compose.id) void loadComments(); else void load(false, true); }} />}
     </section>
   );
 }

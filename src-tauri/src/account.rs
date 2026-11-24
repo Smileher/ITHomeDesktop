@@ -99,7 +99,7 @@ fn token_value(value: &str) -> Option<String> {
         && !token.contains(['\r', '\n', ' ']))
     .then(|| token.to_owned())
 }
-async fn response_json(request: RequestBuilder) -> Result<Value> {
+pub(crate) async fn response_json(request: RequestBuilder) -> Result<Value> {
     let response = request.send().await.map_err(|_| failure())?;
     if [401, 403].contains(&response.status().as_u16()) {
         return Err(AppError::new("login", "官方授权已失效，请重新登录后重试"));
@@ -158,7 +158,7 @@ impl Api {
             .cloned().ok_or_else(|| AppError::new("protocol", "用户主页响应缺少内容"))
     }
 
-    async fn credential(&self) -> Result<(u64, String, String)> {
+    pub(crate) async fn credential(&self) -> Result<(u64, String, String)> {
         let generation = self.auth.generation.load(Ordering::SeqCst);
         let session = self.auth.session()?;
         if session.profile.id == 0 {
@@ -225,7 +225,7 @@ impl Api {
         });
         Ok((generation, token, hash))
     }
-    fn account_headers(
+    pub(crate) fn account_headers(
         &self,
         request: RequestBuilder,
         url: &Url,

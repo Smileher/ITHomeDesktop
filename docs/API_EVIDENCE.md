@@ -32,7 +32,19 @@
 | 官方黑名单 | napi 的 `/api/userselfblock/getblockusers`；实际字段 UserID、UserNick、AddTime；create/delete 使用 userId |
 | 二维码登录 | 官方 `my.ruanmei.com/user-login/` 页面及其 main.49ad7041.js；微信 getwxqrcode/getwxqrcodelogininfo、App qrcodelogin/create/check 由官方页面执行，客户端仅调整显示布局并核验最终 Cookie |
 
-账号接口需要 JWT。凭据由现有加密 Cookie 会话或官方 `loginbyuserhash` 授权流程取得，仅短暂保留在 Rust 内存，不发送至前端、不写日志。公开圈子请求不附带账号凭据；个人黑名单在本地显示时生效。云收藏和黑名单写操作只发送一次，结果不确定时要求先刷新核对。
+账号接口需要 JWT。凭据由现有加密 Cookie 会话或官方 `loginbyuserhash` 授权流程取得，仅短暂保留在 Rust 内存，不发送至前端、不写日志。公开圈子列表不附带账号凭据；登录后的详情及评论携带授权以读取自身点赞/收藏状态，不写入公共缓存；个人黑名单在本地显示时生效。写操作只发送一次，结果不确定时要求先刷新核对。
+
+0.1.5 补充（参考用户提供的 WinUI 客户端请求契约；消息均已做官方服务只读核验）：
+
+| 用途 | 当前接口与字段依据 |
+| --- | --- |
+| 会话、未读数 | chat.ithome.com 的 `/api/conversation/getconversations`、`/api/message/getnotreadcount`；列表含 anotherUserId、summary、lastTime、notReadMessageCount，计数为 totalCount |
+| 会话历史 | `/api/message/getmessages`；anotherUserId 是有符号整数，系统会话可能为负数，lastTime 为分页游标；实际空数组保留为空，不构造消息 |
+| 回复我的新闻评论 | cmt 的 `/apiv2/comment/getreplymecommentlist`；news/comment 对，使用 comment.id 分页 |
+| 回复我的圈子评论 | qapi 的 `/api/comment/getreplymecomments`；current/list/pageSize/total，评论关联 contentId |
+| 圈子文字发帖 | `/api/content/postmicroblog`；id=0、contents、topicId、timeStamp、location、whoCanSee、bigImage。只使用真实列表中返回的话题，不伪造设备来源 |
+| 圈子回复 | `/api/comment/postcomment`；contentId 和 replyCommentId 分开，contents 为服务端内容结构 |
+| 圈子点赞、收藏 | `/api/content/vote`、`/api/comment/vote`（voteType=1/0）；`/api/content/star`、`/api/content/unstar`（query id）。仅隔离写测试，尚未向真实账号提交验证 |
 
 实时对比中，无参数、r=0、时间参数的新闻源返回相同最新新闻，未证明第三方拥有更快的独立新闻源。官方 CDN 自身的更新时间仍取决于服务端。
 

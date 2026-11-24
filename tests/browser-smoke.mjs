@@ -75,6 +75,8 @@ try {
   await page.locator(".comments").waitFor();
   assert.equal(await page.getByRole("textbox", { name: "评论草稿" }).count(), 0);
   await page.locator(".toolbar-comment").click();
+  assert.equal(await page.getByRole("textbox", { name: "评论草稿" }).count(), 0);
+  await page.locator(".comments").getByRole("button", { name: "写评论", exact: true }).click();
   await page.getByRole("textbox", { name: "评论草稿" }).waitFor();
   await page.getByRole("button", { name: "暂存并关闭", exact: true }).click();
   await page.getByRole("button", { name: "我的", exact: true }).click();
@@ -198,6 +200,7 @@ try {
     .getByRole("heading", { name: "自动化测试：文章与评论的状态恢复" })
     .waitFor();
   await page.locator(".toolbar-comment").click();
+  await page.locator(".comments").getByRole("button", { name: "写评论", exact: true }).click();
   await page
     .getByRole("textbox", { name: "评论草稿" })
     .fill("测试草稿：切换之后继续写。");
@@ -208,6 +211,7 @@ try {
   await page.getByText("设置已保存", { exact: true }).waitFor();
   await page.getByRole("button", { name: "资讯", exact: true }).click();
   await page.locator(".toolbar-comment").click();
+  await page.locator(".comments").getByRole("button", { name: "写评论", exact: true }).click();
   await page.getByRole("textbox", { name: "评论草稿" }).waitFor();
   assert.equal(
     await page.getByRole("textbox", { name: "评论草稿" }).inputValue(),
@@ -215,6 +219,7 @@ try {
   );
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.locator(".toolbar-comment").click();
+  await page.locator(".comments").getByRole("button", { name: "写评论", exact: true }).click();
   await page.getByRole("textbox", { name: "评论草稿" }).waitFor();
   await page.waitForFunction(
     () =>

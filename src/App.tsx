@@ -63,6 +63,7 @@ import Comments from "./components/Comments";
 import SettingsView from "./components/SettingsView";
 import CircleView from "./components/CircleView";
 import AccountCenter from "./components/AccountCenter";
+import MessageCenter from "./components/MessageCenter";
 import UserProfile from "./components/UserProfile";
 import { avatarUrl } from "./account-domain";
 import type { AccountTab } from "./account-domain";
@@ -96,7 +97,7 @@ export default function App() {
   const [profile, setProfile] = useState<Profile>({ id: 0, nick: "" });
   const [channel, setChannel] = useState("news");
   const [buildChannel, setBuildChannel] = useState("standalone");
-  const [version, setVersion] = useState("0.1.4");
+  const [version, setVersion] = useState("0.1.5");
   const [view, setView] = useState<View>("news");
   const [accountTab, setAccountTab] = useState<AccountTab>("home");
   const [userTarget, setUserTarget] = useState<{ id: number; name: string } | null>(null);
@@ -897,10 +898,10 @@ export default function App() {
           />
         <main className="detail-pane" ref={articleScroll}>
 
-          {view === "circle" ? <CircleView onImage={showImage} initialId={circleTarget} blockedIds={blockedIds} /> : view === "profile" ? (
+          {view === "circle" ? <CircleView key={profile.id} onImage={showImage} initialId={circleTarget} blockedIds={blockedIds} profile={profile} readOnly={settings.readOnly} onLogin={openLogin} registerFlush={registerFlush} /> : view === "profile" ? (
             <AccountCenter profile={profile} tab={accountTab} onTab={setAccountTab} onLogin={openLogin}
               onLogout={() => setConfirm({ title: "退出当前账号？已保存的草稿会按账号保留。", action: logout })}
-              onSettings={() => void navigate("settings")} onHistory={() => void navigate("history")}
+              onSettings={() => void navigate("settings")}
               readOnly={settings.readOnly}
               onConfirm={(title, action) => setConfirm({ title, action })}
               onBlacklistChanged={() => setBlacklistKey((value) => value + 1)}
@@ -921,12 +922,9 @@ export default function App() {
               onBlacklist={() => { setAccountTab("blacklist"); void navigate("profile"); }}
             />
           ) : officialView ? (
-            <section className="official-page">
-              <span className="eyebrow">连接官方服务</span><h1>消息</h1>
-              <div className="official-symbol"><AlertRegular /></div>
-              <p>在官方账号页面查看账号相关内容。当前版本尚未提供后台消息推送。</p>
-              <Button appearance="primary" icon={<ArrowUpRightRegular />} onClick={() => void backend.official("messages").catch((e) => setError(errorText(e)))}>打开官方消息页面</Button>
-            </section>
+            <MessageCenter key={profile.id} profile={profile} onLogin={openLogin} onImage={showImage}
+              onArticle={(id) => void navigate("news").then(() => openArticle(id))}
+              onPost={(id) => { setCircleTarget(id); void navigate("circle"); }} />
           ) : articleLoading ? (
             <div className="loading-center">
               <Spinner label="正在打开文章" size="small" />
@@ -976,9 +974,9 @@ export default function App() {
                   <Button appearance="subtle" icon={<ArrowUpRightRegular />} onClick={() => void backend.official("article", article.data.item.id).catch((e) => setError(errorText(e)))} />
                 </Tooltip>
                 <span className="toolbar-spacer" />
-                <Tooltip content="写评论" relationship="label">
+                <Tooltip content="查看评论" relationship="label">
                   <Button className="toolbar-comment" appearance="subtle" icon={<CommentRegular />}
-                    onClick={() => window.dispatchEvent(new CustomEvent("ithome-compose", { detail: article.data.item.id }))}>
+                    onClick={() => document.querySelector(".comments")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
                     <span className="comment-count">{articleForComments?.item.comments || 0}</span>
                   </Button>
                 </Tooltip>

@@ -198,6 +198,16 @@ impl Api {
             }
             if !stamp.is_empty() { query.append_pair("stamp", stamp); }
         }
+        // Interaction state belongs to the signed-in account and must never enter
+        // the shared public cache. Anonymous browsing keeps its existing path.
+        if ["detail", "comments", "floor"].contains(&kind) && self.auth.profile()?.id > 0 {
+            let (generation, token, _) = self.credential().await?;
+            let value = crate::account::response_json(self.account_headers(self.client.get(url.clone()), &url, &token)?).await?;
+            self.auth.ensure_generation(generation)?;
+            let data = value.get("data").filter(|v| !v.is_null()).cloned()
+                .ok_or_else(|| AppError::new("protocol", "圈子响应缺少内容"))?;
+            return Ok(Cached { data, saved_at: now(), stale: false });
+        }
         let key = format!("circle:public:v1:{kind}:{id}:{page}:{menu}:{stamp}");
         let cached = self.store.cache::<Value>(&key)?;
         if !refresh {
