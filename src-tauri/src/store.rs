@@ -153,6 +153,17 @@ impl Store {
         })
         .collect()
     }
+    pub fn drafts(&self, scope: &str) -> Result<Vec<serde_json::Value>> {
+        let db = self.db.lock().map_err(AppError::storage)?;
+        let mut statement = db.prepare("SELECT id,payload,updated FROM items WHERE scope=?1 AND kind='draft' ORDER BY updated DESC LIMIT 2000").map_err(AppError::storage)?;
+        let rows = statement.query_map(params![scope], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, unsigned(row, 2)?))).map_err(AppError::storage)?;
+        rows.map(|row| {
+            let (key, payload, updated) = row.map_err(AppError::storage)?;
+            let (news, reply) = key.split_once(':').ok_or_else(|| AppError::new("storage", "草稿编号无法识别"))?;
+            let body: String = serde_json::from_str(&payload).map_err(AppError::storage)?;
+            Ok(serde_json::json!({ "newsId": news.parse::<u64>().map_err(AppError::storage)?, "replyId": reply.parse::<u64>().map_err(AppError::storage)?, "body": body, "updated": updated }))
+        }).collect()
+    }
     pub fn item(&self, scope: &str, kind: &str, id: &str) -> Result<Option<String>> {
         self.db
             .lock()

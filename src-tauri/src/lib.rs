@@ -1,4 +1,5 @@
 mod api;
+mod account;
 mod auth;
 mod error;
 mod models;
@@ -10,7 +11,7 @@ use error::{AppError, Result};
 use models::{Article, Bootstrap, Cached, LocalStats, NewsItem, Profile, Settings};
 use serde_json::Value;
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
@@ -67,6 +68,42 @@ async fn get_deals(
 ) -> Result<Cached<Vec<NewsItem>>> {
     local(&window)?;
     state.api.deals(refresh).await
+}
+#[tauri::command]
+async fn account_data(window: WebviewWindow, state: State<'_, AppState>, kind: String, page: u32, cursor: u64) -> Result<Value> {
+    local(&window)?;
+    state.api.account_data(&kind, page, cursor).await
+}
+#[tauri::command]
+async fn account_action(window: WebviewWindow, state: State<'_, AppState>, kind: String, id: u64) -> Result<()> {
+    local(&window)?;
+    state.api.account_action(&kind, id).await
+}
+#[tauri::command]
+async fn validate_session(window: WebviewWindow, state: State<'_, AppState>) -> Result<Profile> {
+    local(&window)?;
+    let generation = state.api.auth.generation.load(std::sync::atomic::Ordering::SeqCst);
+    let session = state.api.auth.session()?;
+    if session.profile.id == 0 { return Ok(session.profile); }
+    let news = state.api.news("news", None, false).await?;
+    let id = news.data.first().ok_or_else(|| AppError::new("network", "暂时无法验证登录"))?.id;
+    let profile = state.api.verify_cookies(&session.cookies, id).await?;
+    state.api.auth.ensure_generation(generation)?;
+    Ok(profile)
+}
+#[tauri::command]
+async fn get_circle(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    kind: String,
+    id: u64,
+    page: u32,
+    menu: u64,
+    stamp: String,
+    refresh: bool,
+) -> Result<Cached<Value>> {
+    local(&window)?;
+    state.api.circle(&kind, id, page, menu, &stamp, refresh).await
 }
 #[tauri::command]
 async fn get_article(
@@ -166,6 +203,11 @@ fn toggle_favorite(
             .store
             .delete_item("local", "favorite", &item.id.to_string())
     }
+}
+#[tauri::command]
+fn get_drafts(window: WebviewWindow, state: State<'_, AppState>) -> Result<Vec<Value>> {
+    local(&window)?;
+    state.api.store.drafts(&state.api.auth.scope()?)
 }
 #[tauri::command]
 fn get_draft(
@@ -335,6 +377,13 @@ async fn open_official(
 ) -> Result<()> {
     local(&window)?;
     let raw = match kind.as_str() {
+        "login-wechat" | "login-app" => {
+            let mut url = Url::parse("https://my.ruanmei.com/user-login/index.htm").unwrap();
+            url.query_pairs_mut().append_pair("forsid", "https://www.ithome.com/")
+                .append_pair("cliextra", "ithome").append_pair("tc", "cd6293e")
+                .append_pair("desktopMode", if kind == "login-app" { "app" } else { "wechat" });
+            url.to_string()
+        }
         "login" => {
             "https://www.ithome.com/user-login/index.htm?url=https%3A%2F%2Fwww.ithome.com%2F"
                 .to_owned()
@@ -342,6 +391,12 @@ async fn open_official(
         "circle" => "https://quan.ithome.com/".into(),
         "deals" => "https://lapin.ithome.com/".into(),
         "profile" | "messages" => "https://my.ruanmei.com/".into(),
+        "mall" => "https://mall.ithome.com/".into(),
+        "assets" => "https://m.ithome.com/fund/my?hidemenu=1&night=0&amoled=0".into(),
+        "tasks" => "https://img.ithome.com/app/newmy/apppage/user/signin.html?hidemenu=1".into(),
+        "contributions" => "https://img.ithome.com/app/commonlist/index.html?page=home&title=%E6%88%91%E7%9A%84%E6%8A%95%E7%A8%BF&hidemenu=1".into(),
+        "edit-profile" => "https://img.ithome.com/app/myprofiles/index.html?hidemenu=1".into(),
+        "feedback" => "https://img.ithome.com/app/errorfeedback/index.html?hidemenu=1".into(),
         "article" => {
             let id = id.ok_or_else(|| AppError::new("validation", "文章 ID 缺失"))?;
             api::validate_id(id)?;
@@ -364,6 +419,7 @@ async fn open_official(
     let url = Url::parse(&raw).map_err(AppError::storage)?;
     if let Some(existing) = app.get_webview_window("official") {
         existing.navigate(url).map_err(AppError::storage)?;
+        if kind.starts_with("login-") { existing.set_size(tauri::LogicalSize::new(460.0, 600.0)).map_err(AppError::storage)?; }
         existing.show().map_err(AppError::storage)?;
         existing.set_focus().map_err(AppError::storage)?;
         return Ok(());
@@ -372,8 +428,18 @@ async fn open_official(
     let scale=window.scale_factor().map_err(AppError::storage)?;
     let remote = WebviewWindowBuilder::new(&app, "official", WebviewUrl::External(url))
         .title("IT之家官方页面 · 由第三方客户端打开")
-        .inner_size((size.width as f64/scale).clamp(360.0,1050.0),(size.height as f64/scale).clamp(500.0,780.0))
+        .inner_size(if kind.starts_with("login-") { 460.0 } else { (size.width as f64/scale).clamp(360.0,1050.0) }, if kind.starts_with("login-") { 600.0 } else { (size.height as f64/scale).clamp(500.0,780.0) })
         .incognito(true)
+        .initialization_script(include_str!("official-login.js"))
+        .on_page_load(|window, payload| {
+            // Only a completed official redirect wakes the local session verifier.
+            if payload.event() == tauri::webview::PageLoadEvent::Finished
+                && payload.url().host_str() == Some("www.ithome.com")
+                && !payload.url().path().starts_with("/user-login/")
+            {
+                let _ = window.app_handle().emit_to("main", "official-login-ready", ());
+            }
+        })
         .on_navigation(|url| {
             url.scheme() == "https" && url.host_str().is_some_and(auth::official_host)
         })
@@ -411,6 +477,7 @@ async fn sync_login(
         "https://myapi.ruanmei.com/api/user/checkloginstatus",
         "https://lapin.ithome.com/",
         "https://quan.ithome.com/",
+        "https://qapi.ithome.com/",
     ] {
         let url = Url::parse(raw).unwrap();
         let cookies = remote
@@ -485,6 +552,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            account_data,
+            account_action,
+            validate_session,
+            get_circle,
             bootstrap,
             get_news,
             get_deals,
@@ -497,6 +568,7 @@ pub fn run() {
             local_items,
             toggle_favorite,
             get_draft,
+            get_drafts,
             save_draft,
             save_settings,
             reset_settings,

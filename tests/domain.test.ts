@@ -43,6 +43,7 @@ test("pagination preserves server ordering, deduplicates IDs and keeps the actua
     [3, 2, 1],
   );
   assert.equal(cursorFor(values), "2026-11-22T09:00:00");
+  assert.equal(cursorFor([...values, { ...item(4), pinned: true }]), "2026-11-22T09:00:00");
   assert.equal(
     mergeNews(
       [],

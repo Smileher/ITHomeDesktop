@@ -6,6 +6,16 @@ export interface Settings {
   showImages: boolean;
   cacheLimitMb: number;
   rememberLogin: boolean;
+  articleImages: boolean;
+  readOnly: boolean;
+  uiFont: string;
+  bodyFont: string;
+  lineHeight: number;
+  autoOpenArticle: boolean;
+  showCommentComposer: boolean;
+  pinnedCard: boolean;
+  circleGrid: boolean;
+  validateSessionOnStart: boolean;
 }
 export interface Profile {
   id: number;
@@ -21,6 +31,9 @@ export interface NewsItem {
   url: string;
   comments: number;
   forbidComment: boolean;
+  pinned?: boolean;
+  advertisement?: boolean;
+  video?: boolean;
 }
 export interface Article {
   item: NewsItem;
@@ -95,6 +108,39 @@ export interface Stats {
   historyCount: number;
   favoritesCount: number;
 }
+export type CircleKind = "latest" | "recommend" | "topic" | "detail" | "comments" | "floor";
+export interface CircleUser {
+  id: number;
+  userNick: string;
+  userAvatar?: string;
+  level?: number;
+}
+export interface CirclePost {
+  id: number;
+  title?: string;
+  user: CircleUser;
+  createTime: string;
+  location?: string;
+  deviceTailModel?: DeviceTail;
+  contents: CommentElement[];
+  pictures?: { src: string; thumbSrc?: string; originSrc?: string }[];
+  videos?: { src?: string; url?: string }[];
+  topics?: CircleTopic[];
+  support: number;
+  commentCount?: number;
+  floorStr?: string;
+  replyUser?: CircleUser;
+  replyCount?: number;
+  replyComments?: CirclePost[];
+  contentFlagTitle?: string;
+}
+export interface CircleTopic { id: number; name: string; logo?: string; hotCount?: number }
+export interface CirclePage {
+  pageStamp?: string;
+  leftCount?: number;
+  list: { feedType: number; feedContent: CirclePost & { data?: CircleTopic[] } }[];
+}
+export interface CircleComments { list: CirclePost[]; }
 export const defaultSettings: Settings = {
   version: 1,
   theme: "system",
@@ -103,6 +149,16 @@ export const defaultSettings: Settings = {
   showImages: true,
   cacheLimitMb: 512,
   rememberLogin: false,
+  articleImages: true,
+  readOnly: false,
+  uiFont: "system",
+  bodyFont: "system",
+  lineHeight: 1.9,
+  autoOpenArticle: true,
+  showCommentComposer: true,
+  pinnedCard: true,
+  circleGrid: true,
+  validateSessionOnStart: true,
 };
 export const channels = [
   { id: "news", name: "最新" },

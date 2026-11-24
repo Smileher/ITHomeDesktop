@@ -27,6 +27,7 @@ pub struct Api {
     pub store: Arc<Store>,
     pub auth: Arc<Auth>,
     pub writes: tokio::sync::Mutex<()>,
+    pub account_credential: tokio::sync::Mutex<Option<crate::account::AccountCredential>>,
 }
 impl Api {
     pub fn new(store: Arc<Store>, auth: Arc<Auth>) -> Result<Self> {
@@ -42,6 +43,7 @@ impl Api {
             store,
             auth,
             writes: tokio::sync::Mutex::new(()),
+            account_credential: tokio::sync::Mutex::new(None),
         })
     }
     pub async fn get(&self, url: &str) -> Result<Response> {
@@ -65,7 +67,7 @@ impl Api {
         if !CHANNELS.contains(&channel) {
             return Err(AppError::new("channel", "不支持的频道"));
         }
-        let key = format!("news:{channel}:{}", cursor.unwrap_or_default());
+        let key = format!("news:v2:{channel}:{}", cursor.unwrap_or_default());
         let cached = self.store.cache::<Vec<NewsItem>>(&key)?;
         if !refresh {
             if let Some(v) = cached
@@ -89,7 +91,7 @@ impl Api {
                     .await
                     .map_err(network)?
             } else {
-                self.get(&format!("https://api.ithome.com/json/newslist/{channel}"))
+                self.get(&format!("https://api.ithome.com/json/newslist/{channel}?r={}", if refresh { now() } else { 0 }))
                     .await?
                     .json()
                     .await
@@ -101,9 +103,14 @@ impl Api {
                 .and_then(Value::as_array)
                 .ok_or_else(|| AppError::new("protocol", "资讯响应格式已变化"))?;
             let mut seen = HashSet::new();
-            let items: Vec<_> = rows
-                .iter()
+            // Pinned entries are a separate official list, never the chronological cursor.
+            let pinned = data.get("toplist").and_then(Value::as_array);
+            let items: Vec<_> = pinned.into_iter().flatten()
                 .filter_map(news_item)
+                .map(|mut item| { item.pinned = true; item })
+                .chain(rows
+                .iter()
+                .filter_map(news_item))
                 .filter(|item| seen.insert(item.id))
                 .collect();
             if items.is_empty() && !rows.is_empty() {
@@ -155,6 +162,62 @@ impl Api {
             })
         }
         .await;
+        cache_fallback(fetched, cached)
+    }
+    pub async fn circle(&self, kind: &str, id: u64, page: u32, menu: u64, stamp: &str, refresh: bool) -> Result<Cached<Value>> {
+        if page == 0 || page > 500 || stamp.len() > 80 {
+            return Err(AppError::new("validation", "圈子分页参数无效"));
+        }
+        let path = match kind {
+            "latest" if [2000000001, 2000000002, 2000000011].contains(&menu) => "/api/home/getnewmenufeeds",
+            "recommend" if [2000000012, 2000000003, 2000000004].contains(&menu) => "/api/home/getrecommendedmenufeeds",
+            "topic" => "/api/topic/gettopicfeeds",
+            "detail" => "/api/content/getcontentdetail",
+            "comments" if [0, 1, 2].contains(&menu) => "/api/comment/getcomments",
+            "floor" => "/api/comment/getsinglefloorcomment",
+            _ => return Err(AppError::new("validation", "不支持的圈子请求")),
+        };
+        if ["topic", "detail", "comments", "floor"].contains(&kind) { validate_id(id)?; }
+        let mut url = Url::parse(&format!("https://qapi.ithome.com{path}")).unwrap();
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("page", &page.to_string()).append_pair("pageSize", "20");
+            if ["latest", "recommend"].contains(&kind) {
+                query.append_pair("pageId", if kind == "latest" { "2000000004" } else { "2000000002" })
+                    .append_pair("flowType", "0").append_pair("menuId", &menu.to_string());
+                // The current home feed requires the newer App contract to return posts.
+                query.append_pair("appver", "933").append_pair("rawappver", "9.33").append_pair("platform", "ithome_android");
+            } else {
+                query.append_pair("appver", "799").append_pair("platform", "ithome_uwp");
+                match kind {
+                    "topic" => { query.append_pair("topicId", &id.to_string()).append_pair("pid", "0").append_pair("menuId", "2000000002"); }
+                    "comments" => { query.append_pair("contentId", &id.to_string()).append_pair("current", &page.to_string()).append_pair("sortType", &menu.to_string()); }
+                    "floor" => { validate_id(menu)?; query.append_pair("floorCommentId", &id.to_string()).append_pair("contentId", &menu.to_string()); }
+                    _ => { query.append_pair("id", &id.to_string()); }
+                }
+            }
+            if !stamp.is_empty() { query.append_pair("stamp", stamp); }
+        }
+        let key = format!("circle:public:v1:{kind}:{id}:{page}:{menu}:{stamp}");
+        let cached = self.store.cache::<Value>(&key)?;
+        if !refresh {
+            if let Some(value) = cached.as_ref().filter(|v| now().saturating_sub(v.saved_at) < 60) {
+                return Ok(value.clone());
+            }
+        }
+        let fetched = async {
+            // Public browsing deliberately sends no account credentials.
+            let response = check(self.client.get(url).header(REFERER, "https://quan.ithome.com/").send().await.map_err(network)?)?;
+            let value: Value = response.json().await.map_err(network)?;
+            if value.get("success") != Some(&Value::Bool(true)) {
+                return Err(AppError::new("server_message", value.get("errorMessage").and_then(Value::as_str).unwrap_or("圈子读取失败")));
+            }
+            let data = value.get("data").filter(|v| !v.is_null()).cloned()
+                .ok_or_else(|| AppError::new("protocol", "圈子响应缺少内容"))?;
+            self.store.put_cache(&key, &data)?;
+            self.trim()?;
+            Ok(Cached { data, saved_at: now(), stale: false })
+        }.await;
         cache_fallback(fetched, cached)
     }
     pub async fn article(&self, id: u64, refresh: bool) -> Result<Cached<Article>> {
@@ -330,6 +393,7 @@ impl Api {
     }
     pub async fn submit(&self, id: u64, reply: u64, body: &str) -> Result<Value> {
         let _write = self.writes.lock().await;
+        if self.store.settings()?.read_only { return Err(AppError::new("readonly", "只读模式已开启，请在设置中关闭后操作")); }
         let generation = self.auth.generation.load(Ordering::SeqCst);
         if self.auth.profile()?.id == 0 {
             return Err(AppError::new("login", "请先登录账号"));
@@ -356,6 +420,7 @@ impl Api {
     }
     pub async fn vote(&self, id: u64, cancel: bool) -> Result<Value> {
         let _write = self.writes.lock().await;
+        if self.store.settings()?.read_only { return Err(AppError::new("readonly", "只读模式已开启，请在设置中关闭后操作")); }
         if self.auth.profile()?.id == 0 {
             return Err(AppError::new("login", "请先登录账号"));
         }
@@ -532,6 +597,10 @@ pub fn news_item(value: &Value) -> Option<NewsItem> {
             .get("forbidcomment")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        pinned: false,
+        advertisement: value.get("aid").and_then(Value::as_u64).unwrap_or(0) > 0
+            || text(value, "NewsTips") == "广告",
+        video: value.get("v").is_some_and(|v| !v.is_null() && v != "" && v != "0" && v != 0),
     })
 }
 pub fn comment_sn(page: &str) -> Option<String> {
@@ -637,6 +706,9 @@ fn parse_deals(page: &str) -> Result<Vec<NewsItem>> {
             url: href.to_owned(),
             comments: 0,
             forbid_comment: false,
+            pinned: false,
+            advertisement: false,
+            video: false,
         });
     }
     if items.is_empty() {
@@ -697,6 +769,9 @@ fn parse_search(page: &str) -> Result<Vec<NewsItem>> {
             url: canonical_url(id),
             comments: 0,
             forbid_comment: false,
+            pinned: false,
+            advertisement: false,
+            video: false,
         });
     }
     Ok(items)
@@ -705,6 +780,13 @@ fn parse_search(page: &str) -> Result<Vec<NewsItem>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn official_news_flags_are_retained_without_title_guessing() {
+        let item = news_item(&json!({"newsid":1,"title":"新闻标题","aid":1,"v":"100"})).unwrap();
+        assert!(item.advertisement && item.video);
+        let ordinary = news_item(&json!({"newsid":2,"title":"优惠广告字样不等于广告标记"})).unwrap();
+        assert!(!ordinary.advertisement && !ordinary.video);
+    }
     #[test]
     fn canonical_and_sn_match_official_page_shape() {
         assert_eq!(

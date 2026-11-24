@@ -10,6 +10,16 @@ pub struct Settings {
     pub show_images: bool,
     pub cache_limit_mb: u32,
     pub remember_login: bool,
+    pub article_images: bool,
+    pub read_only: bool,
+    pub ui_font: String,
+    pub body_font: String,
+    pub line_height: f64,
+    pub auto_open_article: bool,
+    pub show_comment_composer: bool,
+    pub pinned_card: bool,
+    pub circle_grid: bool,
+    pub validate_session_on_start: bool,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -21,6 +31,16 @@ impl Default for Settings {
             show_images: true,
             cache_limit_mb: 512,
             remember_login: false,
+            article_images: true,
+            read_only: false,
+            ui_font: "system".into(),
+            body_font: "system".into(),
+            line_height: 1.9,
+            auto_open_article: true,
+            show_comment_composer: true,
+            pinned_card: true,
+            circle_grid: true,
+            validate_session_on_start: true,
         }
     }
 }
@@ -30,6 +50,9 @@ impl Settings {
             || !["system", "light", "dark"].contains(&self.theme.as_str())
             || !(14..=24).contains(&self.font_size)
             || !(64..=2048).contains(&self.cache_limit_mb)
+            || !["system", "Microsoft YaHei UI", "SimSun", "Segoe UI"].contains(&self.ui_font.as_str())
+            || !["system", "Microsoft YaHei UI", "SimSun", "Segoe UI"].contains(&self.body_font.as_str())
+            || !self.line_height.is_finite() || !(1.5..=2.4).contains(&self.line_height)
         {
             return Err(crate::error::AppError::new(
                 "invalid_settings",
@@ -52,6 +75,12 @@ pub struct NewsItem {
     pub url: String,
     pub comments: u64,
     pub forbid_comment: bool,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub advertisement: bool,
+    #[serde(default)]
+    pub video: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

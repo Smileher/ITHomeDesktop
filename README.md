@@ -9,8 +9,9 @@ A third-party Windows desktop client for IT Home, with a focused reading layout,
 ## Preview status
 
 - Native news channels, article reading, comment browsing, local bookmarks, history, and settings.
-- Official sign-in window, encrypted session persistence, and comment/reply/vote integration; live-account validation is still required.
-- Public homepage deals are shown in the native feed; circles and account services open in an isolated official-page window because the current circle API has migrated to the official app. Native community parity and background notifications are not complete.
+- Official WeChat / IT Home QR sign-in windows, automatic session sync and encrypted persistence. Phone confirmation and account writes require user validation.
+- Native public circles, topics, post details and replies; official news/post favorites, account comments, posts, following and blacklist management. Account reads have been checked with a real session; account mutation checks use fixtures.
+- The account hub includes local drafts/history and verified official-page shortcuts for the mall, assets, coin tasks, contributions and profile editing. Background notifications remain unfinished.
 - Source labels follow official responses; there is no custom tail or device impersonation.
 - Microsoft Store packaging is provided. Store identity and review are required before Store distribution.
 

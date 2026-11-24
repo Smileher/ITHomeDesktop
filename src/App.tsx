@@ -28,7 +28,6 @@ import {
   CheckmarkRegular,
   DismissRegular,
   HistoryRegular,
-  HomeRegular,
   NewsRegular,
   PersonRegular,
   SearchRegular,
@@ -45,6 +44,7 @@ import {
   ArrowDownloadRegular,
 } from "@fluentui/react-icons";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { backend, native } from "./bridge";
 import {
   articleId,
@@ -60,6 +60,9 @@ import CachedImage from "./components/CachedImage";
 import ArticleBody from "./components/ArticleBody";
 import Comments from "./components/Comments";
 import SettingsView from "./components/SettingsView";
+import CircleView from "./components/CircleView";
+import AccountCenter from "./components/AccountCenter";
+import type { AccountTab } from "./account-domain";
 import appLogo from "./assets/app.svg";
 
 type View =
@@ -92,14 +95,19 @@ export default function App() {
   const [profile, setProfile] = useState<Profile>({ id: 0, nick: "" });
   const [channel, setChannel] = useState("news");
   const [buildChannel, setBuildChannel] = useState("standalone");
-  const [version, setVersion] = useState("0.1.2");
+  const [version, setVersion] = useState("0.1.3");
   const [view, setView] = useState<View>("news");
+  const [accountTab, setAccountTab] = useState<AccountTab>("home");
+  const [circleTarget, setCircleTarget] = useState(0);
+  const [blockedIds, setBlockedIds] = useState(new Set<number>());
+  const [blacklistKey, setBlacklistKey] = useState(0);
   const [items, setItems] = useState<NewsItem[]>([]);
   const [article, setArticle] = useState<Cached<Article> | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [favoriteIds, setFavoriteIds] = useState(new Set<number>());
   const [loading, setLoading] = useState(true);
   const [articleLoading, setArticleLoading] = useState(false);
+  const [cloudSaving, setCloudSaving] = useState(false);
   const [more, setMore] = useState(true);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("正在连接 IT之家…");
@@ -111,6 +119,7 @@ export default function App() {
   const [loginOpened, setLoginOpened] = useState(false);
   const [remember, setRemember] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const syncInFlight = useRef(false);
   const [loginError, setLoginError] = useState("");
   const [commentsKey, setCommentsKey] = useState(0);
   const [image, setImage] = useState<{
@@ -127,6 +136,7 @@ export default function App() {
   const feedGeneration = useRef(0);
   const articleGeneration = useRef(0);
   const selectedRef = useRef(selected);
+  const readerCleared = useRef(false);
   selectedRef.current = selected;
   const flush = useRef<() => Promise<void>>(async () => {});
   const settingsQueue = useRef<Promise<unknown>>(Promise.resolve());
@@ -146,6 +156,13 @@ export default function App() {
     setLoginOpened(false);
     setLoginError("");
   }, []);
+  const loginSync = useRef<() => Promise<void>>(async () => {});
+  loginSync.current = syncLogin;
+  useEffect(() => {
+    if (!native || !loginOpened) return;
+    const subscription = listen("official-login-ready", () => { void loginSync.current(); });
+    return () => { void subscription.then((unlisten) => unlisten()); };
+  }, [loginOpened]);
   const showImage = useCallback((source: string, display = source) => {
     const normalized = source.startsWith("//") ? `https:${source}` : source;
     setImage({ source: normalized, display });
@@ -178,6 +195,14 @@ export default function App() {
   }, [dark]);
   useEffect(() => {
     let live = true;
+    setBlockedIds(new Set());
+    if (profile.id) void backend.account<{ UserID: number }[]>("blacklist").then((rows) => {
+      if (live) setBlockedIds(new Set(rows.map((row) => row.UserID)));
+    }).catch(() => { if (live) setStatus("黑名单暂未同步，可在账号中心重试"); });
+    return () => { live = false; };
+  }, [profile.id, blacklistKey]);
+  useEffect(() => {
+    let live = true;
     void backend
       .bootstrap()
       .then((value) => {
@@ -190,6 +215,10 @@ export default function App() {
         setVersion(value.version);
         if (value.warnings.length) setError(value.warnings.join("；"));
         setReady(true);
+        if (value.profile.id && value.settings.validateSessionOnStart) {
+          void backend.validate().then((profile) => { if (live) setProfile(profile); })
+            .catch((e) => { if (live) setStatus(`登录验证暂未完成 · ${errorText(e)}`); });
+        }
       })
       .catch((e) => {
         if (live) {
@@ -321,10 +350,12 @@ export default function App() {
       if (
         !append &&
         !selectedRef.current &&
+        !readerCleared.current &&
+        settingsRef.current.autoOpenArticle &&
         values.length &&
         window.innerWidth >= 900
       )
-        void openArticle(values[0].id);
+        void openArticle((values.find((item) => !item.pinned && !item.advertisement) || values[0]).id);
     } catch (e) {
       if (token === feedGeneration.current) setError(errorText(e));
     } finally {
@@ -349,6 +380,14 @@ export default function App() {
   async function navigate(next: View) {
     try {
       await flush.current();
+      if (next === "news" && view === "news") {
+        readerCleared.current = true;
+        articleGeneration.current += 1;
+        setSelected(null);
+        selectedRef.current = null;
+        setArticle(null);
+        setArticleLoading(false);
+      }
       setView(next);
       setFocused(false);
       setError("");
@@ -433,6 +472,8 @@ export default function App() {
     }
   }
   async function syncLogin() {
+    if (syncInFlight.current) return;
+    syncInFlight.current = true;
     setSyncing(true);
     setLoginError("");
     try {
@@ -453,6 +494,7 @@ export default function App() {
       setLoginError(errorText(e));
     } finally {
       setSyncing(false);
+      syncInFlight.current = false;
     }
   }
   async function logout() {
@@ -469,21 +511,25 @@ export default function App() {
       item.title.toLocaleLowerCase().includes(keyword),
     );
   }, [items, query]);
-  const officialView = ["circle", "messages", "profile"].includes(
+  const officialView = ["messages", "profile"].includes(
     view,
   );
   const selectedFavorite = article && favoriteIds.has(article.data.item.id);
   const theme = useMemo(
     () => ({
       ...(dark ? webDarkTheme : webLightTheme),
+      fontFamilyBase: settings.uiFont === "system" ? webLightTheme.fontFamilyBase : `"${settings.uiFont}", sans-serif`,
       colorBrandBackground: dark ? "#d6535b" : "#bd2530",
       colorBrandBackgroundHover: dark ? "#df6971" : "#a71f29",
       colorBrandBackgroundPressed: "#8e1923",
       colorBrandForeground1: dark ? "#ff949b" : "#b3222d",
       colorBrandForegroundLink: dark ? "#ff949b" : "#b3222d",
       colorBrandStroke1: dark ? "#ff949b" : "#bd2530",
+      colorNeutralForeground2BrandHover: dark ? "#ff7890" : "#f42548",
+      colorNeutralForeground2BrandPressed: dark ? "#ff7890" : "#f42548",
+      colorNeutralForeground2BrandSelected: dark ? "#ff7890" : "#f42548",
     }),
-    [dark],
+    [dark, settings.uiFont],
   );
 
   return (
@@ -492,9 +538,12 @@ export default function App() {
       className={`theme-root ${dark ? "theme-dark" : ""}`}
     >
       <div
-      className={`app ${dark ? "dark" : "light"} ${settings.compact ? "compact" : ""} ${selected ? "has-article" : ""} ${focused ? "focus-reading" : ""}`}
+      className={`app ${dark ? "dark" : "light"} ${settings.compact ? "compact" : ""} ${selected ? "has-article" : ""} ${focused ? "focus-reading" : ""} ${settings.articleImages ? "" : "hide-article-images"} ${settings.showCommentComposer ? "" : "hide-composer"} ${settings.pinnedCard ? "pinned-cards" : ""} ${settings.circleGrid ? "" : "circle-large-images"}`}
       style={
-        { "--reader-font": `${settings.fontSize}px` } as React.CSSProperties
+        { "--reader-font": `${settings.fontSize}px`, "--reader-line-height": settings.lineHeight,
+          "--ui-font": settings.uiFont === "system" ? '"Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif' : `"${settings.uiFont}", sans-serif`,
+          "--body-font": settings.bodyFont === "system" ? "inherit" : `"${settings.bodyFont}", serif`,
+        } as React.CSSProperties
       }
     >
       <header className="topbar">
@@ -578,7 +627,7 @@ export default function App() {
                 appearance="subtle"
                 className={view === item.id ? "nav-active" : ""}
                 icon={item.icon}
-                onClick={() => void navigate(item.id)}
+                onClick={() => { if (item.id === "circle") setCircleTarget(0); void navigate(item.id); }}
               >
                 {names[item.id]}
               </Button>
@@ -628,7 +677,7 @@ export default function App() {
             </Button>
           </div>
         </aside>
-        {!officialView && view !== "settings" && (
+        {!officialView && view !== "settings" && view !== "circle" && (
           <section className="feed-pane" aria-label={names[view]}>
             <div className="feed-heading">
               <h1>{view === "news" ? "今日资讯" : names[view]}</h1>
@@ -676,33 +725,11 @@ export default function App() {
                 </div>
               ) : (
                 <>
-                  {view === "news" && !query && filtered[0] && (
-                    <button
-                      className={`news-feature ${filtered[0].id === selected ? "selected" : ""}`}
-                      onClick={() => void openArticle(filtered[0].id)}
-                      aria-label={`打开焦点文章：${filtered[0].title}`}
-                    >
-                      {settings.showImages && filtered[0].image && (
-                        <CachedImage
-                          src={filtered[0].image}
-                          alt=""
-                          className="feature-image"
-                        />
-                      )}
-                      <span className="feature-shade" />
-                      <span className="feature-copy">
-                        <span className="feature-kicker">今日焦点</span>
-                        <span className="feature-title">{filtered[0].title}</span>
-                        <span className="feature-action">打开文章&nbsp; →</span>
-                      </span>
-                    </button>
-                  )}
                   {filtered
-                    .slice(view === "news" && !query ? 1 : 0)
                     .map((item) => (
                   <button
                     key={item.id}
-                    className={`news-row ${item.id === selected ? "selected" : ""}`}
+                    className={`news-row ${item.id === selected ? "selected" : ""} ${item.pinned ? "pinned" : ""}`}
                     onClick={() => void openArticle(item.id)}
                     aria-pressed={item.id === selected}
                   >
@@ -715,6 +742,9 @@ export default function App() {
                     )}
                     <span className="news-row-title">{item.title}</span>
                     <span className="news-row-meta">
+                      {item.pinned && <span className="news-badge pinned">置顶</span>}
+                      {item.advertisement && <span className="news-badge advertisement">广告</span>}
+                      {item.video && <span className="news-badge video">视频</span>}
                       <span>{displayDate(item.date)}</span>
                       <span className="push-right">
                         {item.comments > 0 ? `${item.comments} 评` : ""}
@@ -759,7 +789,16 @@ export default function App() {
           </section>
         )}
         <main className="detail-pane" ref={articleScroll}>
-          {view === "settings" ? (
+          {view === "circle" ? <CircleView onImage={showImage} initialId={circleTarget} blockedIds={blockedIds} /> : view === "profile" ? (
+            <AccountCenter profile={profile} tab={accountTab} onTab={setAccountTab} onLogin={openLogin}
+              onLogout={() => setConfirm({ title: "退出当前账号？已保存的草稿会按账号保留。", action: logout })}
+              onSettings={() => void navigate("settings")} onHistory={() => void navigate("history")}
+              onLocalFavorites={() => void navigate("favorite")} readOnly={settings.readOnly}
+              onConfirm={(title, action) => setConfirm({ title, action })}
+              onBlacklistChanged={() => setBlacklistKey((value) => value + 1)}
+              onArticle={(id) => void navigate("news").then(() => openArticle(id))}
+              onPost={(id) => { setCircleTarget(id); void navigate("circle"); }} />
+          ) : view === "settings" ? (
             <SettingsView
               settings={settings}
               channel={buildChannel}
@@ -768,94 +807,16 @@ export default function App() {
               onReset={resetSettings}
               onError={showError}
               onConfirm={(title, action) => setConfirm({ title, action })}
+              profile={profile}
+              onLogin={openLogin}
+              onBlacklist={() => { setAccountTab("blacklist"); void navigate("profile"); }}
             />
           ) : officialView ? (
             <section className="official-page">
-              <span className="eyebrow">连接官方服务</span>
-              <h1>{names[view]}</h1>
-              {view === "profile" && profile.id ? (
-                <>
-                  <Avatar name={profile.nick} size={64} />
-                  <h2>{profile.nick}</h2>
-                  <p>软媒账号 {profile.id}</p>
-                </>
-              ) : (
-                <div className="official-symbol">
-                  {view === "circle" ? (
-                    <ChatMultipleRegular />
-                  ) : view === "deals" ? (
-                    <ShoppingBagRegular />
-                  ) : view === "messages" ? (
-                    <AlertRegular />
-                  ) : (
-                    <PersonRegular />
-                  )}
-                </div>
-              )}
-              <p>
-                {view === "circle"
-                  ? "旧版圈子接口当前只返回迁移公告，现行内容由官方 App 提供；这里保留官方页面入口，不显示过期或伪造的帖子。"
-                  : view === "deals"
-                    ? "在官方好物页面查看商品、优惠和促销详情。"
-                    : view === "messages"
-                      ? "在官方账号页面查看账号相关内容。当前版本尚未提供后台消息推送。"
-                      : "在官方页面管理资料及账号相关内容。"}
-              </p>
-              <Button
-                appearance="primary"
-                icon={<ArrowUpRightRegular />}
-                onClick={() =>
-                  void backend
-                    .official(view)
-                    .catch((e) => setError(errorText(e)))
-                }
-              >
-                打开官方{view === "profile" ? "账号" : names[view]}页面
-              </Button>
-              {view === "profile" && (
-                <div className="profile-actions">
-                  <Button onClick={openLogin}>
-                    {profile.id ? "重新登录 / 同步会话" : "登录账号"}
-                  </Button>
-                  {profile.id > 0 && (
-                    <Button
-                      onClick={() =>
-                        setConfirm({
-                          title: "退出当前账号？已保存的草稿会按账号保留。",
-                          action: logout,
-                        })
-                      }
-                    >
-                      退出登录
-                    </Button>
-                  )}
-                </div>
-              )}
-              {view === "profile" && (
-                <div className="mobile-account-links">
-                  <Button
-                    icon={<BookmarkRegular />}
-                    onClick={() => void navigate("favorite")}
-                  >
-                    本机收藏
-                  </Button>
-                  <Button
-                    icon={<HistoryRegular />}
-                    onClick={() => void navigate("history")}
-                  >
-                    浏览记录
-                  </Button>
-                  <Button
-                    icon={<SettingsRegular />}
-                    onClick={() => void navigate("settings")}
-                  >
-                    设置
-                  </Button>
-                </div>
-              )}
-              <p className="muted tiny">
-                此窗口由第三方客户端打开，远程网页不获得本地文件操作权限。
-              </p>
+              <span className="eyebrow">连接官方服务</span><h1>消息</h1>
+              <div className="official-symbol"><AlertRegular /></div>
+              <p>在官方账号页面查看账号相关内容。当前版本尚未提供后台消息推送。</p>
+              <Button appearance="primary" icon={<ArrowUpRightRegular />} onClick={() => void backend.official("messages").catch((e) => setError(errorText(e)))}>打开官方消息页面</Button>
             </section>
           ) : articleLoading ? (
             <div className="loading-center">
@@ -895,6 +856,8 @@ export default function App() {
                   onError={showError}
                   onImage={showImage}
                   registerFlush={registerFlush}
+                  readOnly={settings.readOnly}
+                  blockedIds={blockedIds}
                 />
               </article>
               <div className="article-toolbar">
@@ -920,6 +883,14 @@ export default function App() {
                   正文
                 </span>
                 <div className="push-right toolbar-actions">
+                  <Tooltip content="收藏到官方账号，与官方客户端同步" relationship="label">
+                    <Button appearance="subtle" disabled={settings.readOnly || cloudSaving} onClick={() => {
+                      if (!profile.id) { openLogin(); return; }
+                      setCloudSaving(true);
+                      void backend.accountAction("favorite-add", article.data.item.id).then(() => setStatus("已加入官方收藏"))
+                        .catch((e) => setError(errorText(e))).finally(() => setCloudSaving(false));
+                    }}>官方收藏</Button>
+                  </Tooltip>
                   <Tooltip
                     content={selectedFavorite ? "取消本机收藏" : "加入本机收藏"}
                     relationship="label"
@@ -1021,8 +992,12 @@ export default function App() {
             </DialogTitle>
             <DialogContent>
               <p className="dialog-intro">
-                在应用内打开官方登录页完成验证，授权只发送到 IT之家官方服务；同步后可缓存到本机。
+                选择扫码方式，直接在应用内的官方授权窗口完成登录。成功后自动同步，也可使用原有账号登录。
               </p>
+              <div className="login-methods">
+                {[["login-wechat", "微信扫码"], ["login-app", "IT之家客户端扫码"]].map(([kind, label]) =>
+                  <Button key={kind} size="large" onClick={() => void backend.official(kind).then(() => setLoginOpened(true)).catch((e) => setLoginError(errorText(e)))}>{label}</Button>)}
+              </div>
               <Checkbox
                 checked={remember}
                 onChange={(_, data) => setRemember(!!data.checked)}
@@ -1036,7 +1011,7 @@ export default function App() {
                   {loginError}
                 </div>
               )}
-              {loginOpened && <p>完成官方登录后回到这里，点击“同步登录”核验授权。</p>}
+              {loginOpened && <p>正在等待官方授权；若未自动完成，可点击“同步登录”重试。</p>}
             </DialogContent>
             <DialogActions>
               <Button onClick={() => setLogin(false)} disabled={syncing}>
@@ -1051,7 +1026,7 @@ export default function App() {
                     .catch((e) => setLoginError(errorText(e)))
                 }
               >
-                打开官方登录
+                账号 / 短信登录
               </Button>
               <Button
                 appearance="primary"

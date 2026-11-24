@@ -92,5 +92,5 @@ export function bytesLabel(bytes: number): string {
     : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 export function cursorFor(items: NewsItem[]): string | null {
-  return items.at(-1)?.orderDate || null;
+  return items.filter((item) => !item.pinned).at(-1)?.orderDate || null;
 }

@@ -1,6 +1,6 @@
 # 接口依据与限制
 
-调研日期：2026-11-23。仅列公开、无访问凭据的地址。
+调研日期：2026-11-24。仅列接口地址，不包含访问凭据。
 
 | 用途 | 已观察到的官方依据 |
 | --- | --- |
@@ -17,7 +17,24 @@
 
 官方网页的评论响应使用 `content.userId`、`userNick` 判断会话身份。客户端只把通过此核验的会话作为已同步登录，前端不接收 Cookie。
 
-旧 `https://apiquan.ithome.com/api/post` 当前返回“全新圈子社区已开启，请下载最新App使用”的迁移提示；不能用这条记录伪装成现行圈子列表。当前好物已经按首页公开链接接入原生列表；圈子仍使用官方页面入口，并明确记录官方 Web 接口已迁移的限制。
+旧 `https://apiquan.ithome.com/api/post` 返回迁移提示，不能据此判断新版圈子不可用。分析用户提供的 ITHomeWinUI 2.2611.20.0 程序中的请求地址后，已用实际官方响应核验新版接口：
+
+| 用途 | 当前接口与字段依据 |
+| --- | --- |
+| 新闻置顶、广告、视频 | 同一 newslist 响应中的 `toplist`、`aid`、`v`；原实现遗漏置顶并将首条新闻移至焦点区，现已恢复完整列表，刷新附带时间参数 |
+| 最新圈子 | `https://qapi.ithome.com/api/home/getnewmenufeeds`，pageId=2000000004；menuId=2000000002/2000000001/2000000011；首屏使用 flowType=0、appver=933、platform=ithome_android 的读取契约 |
+| 推荐圈子 | `/api/home/getrecommendedmenufeeds`，pageId=2000000002；menuId=2000000012/2000000003/2000000004 |
+| 话题帖子 | `/api/topic/gettopicfeeds`，topicId、pid=0、menuId、page、stamp |
+| 圈子正文、评论、楼中楼 | `/api/content/getcontentdetail`、`/api/comment/getcomments`、`/api/comment/getsinglefloorcomment`；评论排序 0=最新、1=最早、2=热门，已对照实时楼层顺序 |
+| 新闻云收藏 | `https://napi.ithome.com/api/favnews/get?page=...`；addlist/deletelist 的 JSON `newsids` 数组来自参考程序请求契约 |
+| 账号评论 | `https://cmt.ithome.com/apiv2/comment/getusercommentlist`；真实响应为 news/comment 对，分页游标使用 comment.id |
+| 我的帖子、帖子收藏、关注 | qapi 的 `/api/content/getmycontents`、`/api/content/getstaredcontents`、`/api/user/getfollowedusers`，实际读取通过 |
+| 官方黑名单 | napi 的 `/api/userselfblock/getblockusers`；实际字段 UserID、UserNick、AddTime；create/delete 使用 userId |
+| 二维码登录 | 官方 `my.ruanmei.com/user-login/` 页面及其 main.49ad7041.js；微信 getwxqrcode/getwxqrcodelogininfo、App qrcodelogin/create/check 由官方页面执行，客户端仅调整显示布局并核验最终 Cookie |
+
+账号接口需要 JWT。凭据由现有加密 Cookie 会话或官方 `loginbyuserhash` 授权流程取得，仅短暂保留在 Rust 内存，不发送至前端、不写日志。公开圈子请求不附带账号凭据；个人黑名单在本地显示时生效。云收藏和黑名单写操作只发送一次，结果不确定时要求先刷新核对。
+
+实时对比中，无参数、r=0、时间参数的新闻源返回相同最新新闻，未证明第三方拥有更快的独立新闻源。官方 CDN 自身的更新时间仍取决于服务端。
 
 HTTP 401、403、404、429、服务器异常和网络故障分别处理。只有网络或服务端暂时故障允许使用缓存；权限拒绝与内容移除不回退到旧内容。评论写入超时保留草稿，提示核对结果，不自动重发。
 

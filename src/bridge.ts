@@ -39,6 +39,8 @@ function mapNews(value: Raw): NewsItem {
     url: articleUrl(id),
     comments: Number(value.commentcount || 0),
     forbidComment: !!value.forbidcomment,
+    advertisement: Number(value.aid || 0) > 0 || value.NewsTips === "广告",
+    video: !!value.v && value.v !== "0",
   };
 }
 async function read(url: string, timeout?: number): Promise<Raw> {
@@ -50,14 +52,26 @@ function cached<T>(data: T): Cached<T> {
   return { data, savedAt: Date.now() / 1000, stale: false };
 }
 export const backend = {
+  async account<T = Record<string, unknown>>(kind: string, page = 1, cursor = 0): Promise<T> {
+    if (!native) throw new Error("请在桌面客户端登录后读取官方账号内容");
+    return invoke("account_data", { kind, page, cursor });
+  },
+  async accountAction(kind: "favorite-add" | "favorite-remove" | "block" | "unblock", id: number): Promise<void> {
+    if (!native) throw new Error("请在桌面客户端登录后操作");
+    return invoke("account_action", { kind, id });
+  },
+  async validate(): Promise<Profile> {
+    if (!native) return { id: 0, nick: "" };
+    return invoke("validate_session");
+  },
   async bootstrap(): Promise<Bootstrap> {
     return native
       ? invoke("bootstrap")
       : {
-          settings: (localPreview().settings as Settings) || defaultSettings,
+          settings: { ...defaultSettings, ...(localPreview().settings as Partial<Settings>) },
           profile: { id: 0, nick: "" },
           channel: "preview",
-          version: "0.1.2",
+          version: "0.1.3",
           warnings: [],
         };
   },
@@ -70,14 +84,16 @@ export const backend = {
     const data = await read(
       cursor
         ? `/__more/api/news/newslistpageget?${new URLSearchParams({ Tag: channel, ot: cursor, page: "1", hitCountAuthority: "false" })}`
-        : `/__news/json/newslist/${channel}`,
+        : `/__news/json/newslist/${channel}?r=${refresh ? Date.now() : 0}`,
     );
     const rows = data.newslist || data.Result;
     if (!Array.isArray(rows)) throw new Error("资讯响应格式已变化");
+    const pinned = Array.isArray(data.toplist) ? data.toplist.map((value) => ({ ...mapNews(value), pinned: true })) : [];
+    const seen = new Set<number>();
     return cached(
-      rows
+      [...pinned, ...rows
         .filter((v) => typeof v === "object" && v && "newsid" in v)
-        .map(mapNews),
+        .map(mapNews)].filter((item) => !seen.has(item.id) && !!seen.add(item.id)),
     );
   },
   async deals(refresh = false): Promise<Cached<NewsItem[]>> {
@@ -115,6 +131,33 @@ export const backend = {
       });
     if (!values.length) throw new Error("好物页面未返回可识别内容");
     return cached(values);
+  },
+  async circle<T>(kind: import("./types").CircleKind, id = 0, page = 1, menu = 2000000002, stamp = "", refresh = false): Promise<Cached<T>> {
+    if (native) return invoke("get_circle", { kind, id, page, menu, stamp, refresh });
+    const query = new URLSearchParams({ page: String(page), pageSize: "20" });
+    let path: string;
+    if (kind === "latest" || kind === "recommend") {
+      path = kind === "latest" ? "home/getnewmenufeeds" : "home/getrecommendedmenufeeds";
+      query.set("pageId", kind === "latest" ? "2000000004" : "2000000002");
+      query.set("flowType", "0"); query.set("menuId", String(menu));
+      query.set("appver", "933"); query.set("rawappver", "9.33"); query.set("platform", "ithome_android");
+    } else {
+      query.set("appver", "799"); query.set("platform", "ithome_uwp");
+      if (kind === "topic") {
+        path = "topic/gettopicfeeds";
+        query.set("topicId", String(id)); query.set("pid", "0"); query.set("menuId", "2000000002");
+      } else if (kind === "comments") {
+        path = "comment/getcomments";
+        query.set("contentId", String(id)); query.set("current", String(page)); query.set("sortType", String(menu));
+      } else if (kind === "floor") {
+        path = "comment/getsinglefloorcomment";
+        query.set("floorCommentId", String(id)); query.set("contentId", String(menu));
+      } else { path = "content/getcontentdetail"; query.set("id", String(id)); }
+    }
+    if (stamp) query.set("stamp", stamp);
+    const value = await read(`/__circle/api/${path}?${query}`);
+    if (!value.success || !value.data) throw new Error(String(value.errorMessage || "圈子读取失败"));
+    return cached(value.data as T);
   },
   async article(id: number, refresh = false): Promise<Cached<Article>> {
     if (native) return invoke("get_article", { id, refresh });
@@ -218,6 +261,13 @@ export const backend = {
       ? invoke("get_draft", { id, reply })
       : String(localPreview()[`draft:${id}:${reply}`] || "");
   },
+  async drafts(): Promise<{ newsId: number; replyId: number; body: string; updated: number }[]> {
+    if (native) return invoke("get_drafts");
+    return Object.entries(localPreview()).filter(([key, value]) => /^draft:\d+:\d+$/.test(key) && value).map(([key, value]) => {
+      const [, news, reply] = key.split(":");
+      return { newsId: Number(news), replyId: Number(reply), body: String(value), updated: 0 };
+    });
+  },
   async saveDraft(
     id: number,
     reply: number,
@@ -265,10 +315,18 @@ export const backend = {
       });
     const links: Record<string, string> = {
       login: "https://www.ithome.com/user-login/index.htm",
+      "login-wechat": "https://my.ruanmei.com/user-login/index.htm?forsid=https%3A%2F%2Fwww.ithome.com%2F&cliextra=ithome",
+      "login-app": "https://my.ruanmei.com/user-login/index.htm?forsid=https%3A%2F%2Fwww.ithome.com%2F&cliextra=ithome",
       circle: "https://quan.ithome.com/",
       deals: "https://lapin.ithome.com/",
       profile: "https://my.ruanmei.com/",
       messages: "https://my.ruanmei.com/",
+      mall: "https://mall.ithome.com/",
+      assets: "https://m.ithome.com/fund/my?hidemenu=1",
+      tasks: "https://img.ithome.com/app/newmy/apppage/user/signin.html?hidemenu=1",
+      contributions: "https://img.ithome.com/app/commonlist/index.html?page=home&title=我的投稿&hidemenu=1",
+      "edit-profile": "https://img.ithome.com/app/myprofiles/index.html?hidemenu=1",
+      feedback: "https://img.ithome.com/app/errorfeedback/index.html?hidemenu=1",
     };
     const url =
       kind === "article" && id

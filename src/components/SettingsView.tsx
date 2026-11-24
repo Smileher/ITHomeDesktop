@@ -7,7 +7,7 @@ import {
 } from "@fluentui/react-icons";
 import { backend } from "../bridge";
 import { bytesLabel, errorText } from "../domain";
-import type { Settings, Stats } from "../types";
+import type { Profile, Settings, Stats } from "../types";
 import appLogo from "../assets/app.svg";
 
 export default function SettingsView({
@@ -18,6 +18,9 @@ export default function SettingsView({
   onReset,
   onError,
   onConfirm,
+  profile,
+  onLogin,
+  onBlacklist,
 }: {
   settings: Settings;
   channel: string;
@@ -26,6 +29,9 @@ export default function SettingsView({
   onReset: () => Promise<void>;
   onError: (s: string) => void;
   onConfirm: (title: string, action: () => Promise<void>) => void;
+  profile: Profile;
+  onLogin: () => void;
+  onBlacklist: () => void;
 }) {
   const [stats, setStats] = useState<Stats | null>(null);
   const reload = () => {
@@ -47,7 +53,17 @@ export default function SettingsView({
         <h1>设置</h1>
         <p>外观、阅读与本地数据</p>
       </div>
-      <h2>外观与阅读</h2>
+      <nav className="settings-sections" aria-label="设置分类">
+        {[["settings-account", "账号"], ["settings-reading", "阅读"], ["settings-storage", "存储"], ["settings-about", "关于"]].map(([id, name]) =>
+          <button key={id} onClick={() => document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" })}>{name}</button>)}
+      </nav>
+      <h2 id="settings-account">账号</h2>
+      <div className="setting-group">
+        <div className="setting-row"><div><strong>IT之家账号</strong><p>{profile.id ? profile.nick : "未登录"} · 使用官方扫码或账号登录</p></div><Button onClick={onLogin}>{profile.id ? "重新授权" : "登录"}</Button></div>
+        <div className="setting-row"><div><strong>黑名单管理</strong><p>查看、添加和解除官方账号的用户屏蔽</p></div><Button onClick={onBlacklist}>管理</Button></div>
+        {([ ["validateSessionOnStart", "启动时验证登录状态", "启动后检查官方会话，网络异常时保留本地授权"], ["readOnly", "只读模式", "禁用评论、点赞、云端收藏和屏蔽等账号写入操作"] ] as const).map(([key, name, description]) => <div className="setting-row" key={key}><div><strong>{name}</strong><p>{description}</p></div><Switch aria-label={name} checked={settings[key]} onChange={(_, data) => onChange({ [key]: data.checked })} /></div>)}
+      </div>
+      <h2 id="settings-reading">外观与阅读</h2>
       <div className="setting-group">
         <div className="setting-row">
           <div>
@@ -98,6 +114,9 @@ export default function SettingsView({
             onChange={(_, data) => onChange({ compact: data.checked })}
           />
         </div>
+        {([ ["uiFont", "界面字体"], ["bodyFont", "正文字体"] ] as const).map(([key, name]) => <div className="setting-row" key={key}><div><strong>{name}</strong><p>使用 Windows 已安装字体，缺失时由系统回退</p></div><Dropdown aria-label={name} value={settings[key] === "system" ? "跟随系统" : settings[key]} selectedOptions={[settings[key]]} onOptionSelect={(_, data) => onChange({ [key]: data.optionValue || "system" })}>{["system", "Microsoft YaHei UI", "SimSun", "Segoe UI"].map((font) => <Option key={font} value={font}>{font === "system" ? "跟随系统" : font}</Option>)}</Dropdown></div>)}
+        <div className="setting-row"><div><strong>正文行距</strong><p>调整长文的阅读密度</p></div><Dropdown aria-label="正文行距" value={`${settings.lineHeight} 倍`} selectedOptions={[String(settings.lineHeight)]} onOptionSelect={(_, data) => onChange({ lineHeight: Number(data.optionValue) })}>{[1.5, 1.7, 1.9, 2.1, 2.4].map((n) => <Option key={n} value={String(n)}>{`${n} 倍`}</Option>)}</Dropdown></div>
+        {([ ["articleImages", "显示文章图片", "关闭后正文使用纯文字阅读"], ["autoOpenArticle", "桌面自动打开首篇资讯", "进入频道时在阅读区域打开首篇内容"], ["showCommentComposer", "显示评论输入框", "关闭后仍可阅读评论，草稿会继续保留"], ["pinnedCard", "置顶资讯卡片", "用独立卡片呈现官方置顶内容"], ["circleGrid", "圈子图片网格", "多图使用网格；关闭后使用大图逐张展示"] ] as const).map(([key, name, description]) => <div className="setting-row" key={key}><div><strong>{name}</strong><p>{description}</p></div><Switch aria-label={name} checked={settings[key]} onChange={(_, data) => onChange({ [key]: data.checked })} /></div>)}
         <div className="setting-row">
           <div>
             <strong>显示资讯缩略图</strong>
@@ -110,7 +129,7 @@ export default function SettingsView({
           />
         </div>
       </div>
-      <h2>账号与数据</h2>
+      <h2 id="settings-storage">账号与数据</h2>
       <div className="setting-group">
         <div className="setting-row">
           <div>
@@ -196,7 +215,7 @@ export default function SettingsView({
           </Button>
         </div>
       </div>
-      <h2>关于与分发</h2>
+      <h2 id="settings-about">关于与分发</h2>
       <div className="about-card">
         <img src={appLogo} className="app-logo" alt="客户端图标" />
         <div>

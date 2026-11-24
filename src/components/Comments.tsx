@@ -27,12 +27,11 @@ export function CommentText({ value }: { value: string }) {
           ? names[part.slice(1, -1)]
           : undefined;
         return slug ? (
-          <img
+          <CachedImage
             key={index}
             className="official-emoji"
-            src={`https://img.ithome.com/app/emotion/svg/rm_e_${slug}.svg`}
+            src={`https://img.ithome.com/app/emotion/imgs/rm_e_${slug}.png`}
             alt={part}
-            loading="lazy"
           />
         ) : (
           <span key={index}>{part}</span>
@@ -41,7 +40,7 @@ export function CommentText({ value }: { value: string }) {
     </>
   );
 }
-function DeviceSource({ value }: { value: DeviceTail | string }) {
+export function DeviceSource({ value }: { value: DeviceTail | string }) {
   if (typeof value === "string") return <span>{value}</span>;
   const color = (input?: string | null) =>
     input && /^#[0-9a-f]{3,8}$/i.test(input) ? input : undefined;
@@ -70,6 +69,8 @@ function Thread({
   onError,
   onImage,
   onLogin,
+  readOnly = false,
+  blockedIds,
 }: {
   comment: OfficialComment;
   article: Article;
@@ -78,6 +79,8 @@ function Thread({
   onError: (s: string) => void;
   onImage: (sourceUrl: string, displayUrl?: string) => void;
   onLogin: () => void;
+  readOnly?: boolean;
+  blockedIds: Set<number>;
 }) {
   const [children, setChildren] = useState(comment.children || []);
   const [expanded, setExpanded] = useState(false);
@@ -86,7 +89,8 @@ function Thread({
     count: comment.support,
     active: comment.voteStatus === 1,
   });
-  const knownChildren = expanded ? children : children.slice(0, 3);
+  const visibleChildren = children.filter((child) => !blockedIds.has(child.userInfo?.id));
+  const knownChildren = expanded ? visibleChildren : visibleChildren.slice(0, 3);
   useEffect(() => {
     setVote({ count: comment.support, active: comment.voteStatus === 1 });
     setChildren(comment.children || []);
@@ -128,6 +132,7 @@ function Thread({
   }
   return (
     <div className={`comment-thread ${depth ? "nested" : ""}`}>
+      <div className="comment-identity">
       <Avatar
         name={comment.userInfo?.userNick || "家友"}
         image={
@@ -135,18 +140,23 @@ function Thread({
             ? { src: comment.userInfo.userAvatar }
             : undefined
         }
-        size={depth ? 24 : 32}
+        size={depth ? 28 : 40}
       />
+      {comment.userInfo?.level !== undefined && (
+        <span className="comment-level">Lv.{comment.userInfo.level}</span>
+      )}
+      </div>
       <div className="comment-main">
         <div className="comment-byline">
           <strong>{comment.userInfo?.userNick || "家友"}</strong>
-          {comment.userInfo?.level !== undefined && (
-            <span>Lv.{comment.userInfo.level}</span>
-          )}
           <span className="push-right">{comment.floorStr}</span>
         </div>
         <div className="comment-meta">
-          {comment.city} · {displayDate(comment.postTime)}
+          <time>{displayDate(comment.postTime)}</time>
+          {(comment.deviceTailModel || comment.tail) && (
+            <span className="comment-device-tail"><DeviceSource value={comment.deviceTailModel || comment.tail!} /></span>
+          )}
+          {comment.city && <span className="comment-city">{comment.city}</span>}
         </div>
         {comment.replyUserInfo?.userNick && (
           <div className="reply-to">回复 {comment.replyUserInfo.userNick}</div>
@@ -190,11 +200,6 @@ function Thread({
             onClick={(display) => onImage(picture.originSrc || picture.src, display)}
           />
         ))}
-        {(comment.deviceTailModel || comment.tail) && (
-          <div className="comment-device-tail muted tiny">
-            <DeviceSource value={comment.deviceTailModel || comment.tail!} />
-          </div>
-        )}
         {comment.aiHint && <div className="muted tiny">{comment.aiHint}</div>}
         <div className="comment-actions">
           <Button
@@ -203,7 +208,7 @@ function Thread({
             icon={<ThumbLikeRegular />}
             aria-pressed={vote.active}
             onClick={() => void voteClick()}
-            disabled={loading}
+            disabled={loading || readOnly}
           >
             {vote.count || "赞"}
           </Button>
@@ -227,6 +232,8 @@ function Thread({
               onError={onError}
               onImage={onImage}
               onLogin={onLogin}
+              readOnly={readOnly}
+              blockedIds={blockedIds}
             />
           ))}
         {(comment.expandCount! > children.length ||
@@ -253,6 +260,8 @@ export default function Comments({
   onError,
   onImage,
   registerFlush,
+  readOnly = false,
+  blockedIds,
 }: {
   article: Article;
   profile: Profile;
@@ -261,6 +270,8 @@ export default function Comments({
   onError: (s: string) => void;
   onImage: (sourceUrl: string, displayUrl?: string) => void;
   registerFlush: (flush: () => Promise<void>) => void;
+  readOnly?: boolean;
+  blockedIds: Set<number>;
 }) {
   const [page, setPage] = useState<CommentsPage | null>(null);
   const [error, setError] = useState("");
@@ -400,6 +411,7 @@ export default function Comments({
     }
   }
   async function send() {
+    if (readOnly) { onError("只读模式已开启，请在设置中关闭后操作"); return; }
     if (!profile.id) {
       onLogin();
       return;
@@ -482,7 +494,7 @@ export default function Comments({
         </div>
       )}
       {!page && loading && <Spinner size="tiny" label="正在读取评论" />}
-      {list.map((comment) => (
+      {list.filter((comment) => !blockedIds.has(comment.userInfo?.id)).map((comment) => (
         <Thread
           key={comment.id}
           comment={comment}
@@ -491,6 +503,8 @@ export default function Comments({
           onError={onError}
           onImage={onImage}
           onLogin={onLogin}
+          readOnly={readOnly}
+          blockedIds={blockedIds}
         />
       ))}
       {page && !list.length && !loading && (
@@ -532,7 +546,7 @@ export default function Comments({
               ? "聊聊你的看法…"
               : page?.cannotCommentTip || "本文已关闭评论"
           }
-          disabled={!allowed || sending}
+            disabled={!allowed || sending || readOnly}
           resize="vertical"
           appearance="outline"
           aria-label="评论草稿"
@@ -551,7 +565,7 @@ export default function Comments({
             appearance="primary"
             onClick={() => void send()}
             disabled={
-              !allowed || sending || saved || (!body.trim() && !!profile.id)
+              !allowed || sending || saved || readOnly || (!body.trim() && !!profile.id)
             }
           >
             {sending ? "提交中…" : profile.id ? "发表评论" : "登录后评论"}

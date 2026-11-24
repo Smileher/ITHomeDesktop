@@ -29,6 +29,12 @@ export default defineConfig({
       ignored: ["**/src-tauri/**", "**/site/dist/**", "**/test-results/**"],
     },
     proxy: {
+      "/__circle": {
+        target: "https://qapi.ithome.com",
+        changeOrigin: true,
+        headers: { Referer: "https://quan.ithome.com/" },
+        rewrite: (p) => p.replace("/__circle", ""),
+      },
       "/__appcomments": {
         target: "https://cmt.ithome.com",
         changeOrigin: true,

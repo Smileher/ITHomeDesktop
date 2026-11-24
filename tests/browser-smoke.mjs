@@ -41,6 +41,8 @@ try {
   assert.ok((await page.locator(".news-row").count()) > 0);
   report.live.deals = await page.locator(".news-row").count();
   await page.getByRole("button", { name: "资讯", exact: true }).click();
+  await page.locator(".news-row").first().waitFor({ timeout: 45000 });
+  await page.locator(".news-row:not(.pinned) .news-thumb img").first().waitFor({ timeout: 15000 });
   await page.locator(".reader>h1").waitFor({ timeout: 45000 });
   await fs.mkdir("test-results", { recursive: true });
   await fs.mkdir("site/assets", { recursive: true });
@@ -80,7 +82,7 @@ try {
   await page.getByRole("button", { name: "我的", exact: true }).click();
   await page.locator(".mobile-account-links").waitFor();
   await page
-    .locator(".mobile-account-links")
+    .locator(".account-menu")
     .getByRole("button", { name: "设置", exact: true })
     .click();
   await page.getByRole("heading", { name: "设置", exact: true }).waitFor();
