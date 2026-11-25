@@ -66,6 +66,7 @@ export default function UserProfile({ id, name, own = false, onArticle, onPost }
       {([ ["comments", "文章评论", profile?.commentcount], ["posts", "主题帖", profile?.newquancontentcount], ["replies", "回帖", profile?.newquancommentcount] ] as const).map(([value, title, count]) => <button key={value} aria-pressed={tab === value} onClick={() => setTab(value)}>{title}{count !== undefined && <span>{count}</span>}</button>)}
       <Button appearance="subtle" aria-label="刷新个人主页" icon={<ArrowSyncRegular />} disabled={loading} onClick={() => void load()} />
     </div>
+    <div className="profile-stream">
     {error && <div className="inline-error" role="alert">{error}<Button size="small" onClick={() => void load()}>重试</Button></div>}
     {rows.map((row) => <article className="profile-entry" key={row.id}>
       <div className="comment-meta"><time>{displayDate(row.date)}</time>{row.tail && <DeviceSource value={row.tail} />}</div>
@@ -76,5 +77,6 @@ export default function UserProfile({ id, name, own = false, onArticle, onPost }
     {loading && <Spinner size="small" label="正在读取个人主页" />}
     {!loading && !rows.length && !error && <div className="empty-inline">暂时没有公开内容</div>}
     {more && <Button className="load-more" appearance="subtle" disabled={loading} onClick={() => void load(true)}>{loading ? "加载中…" : "加载更多"}</Button>}
+    </div>
   </section>;
 }

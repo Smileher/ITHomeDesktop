@@ -3,7 +3,7 @@ import { Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface
 import {
   ArrowReplyRegular,
   ArrowSyncRegular,
-  ThumbLikeRegular,
+  DismissRegular,
 } from "@fluentui/react-icons";
 import { backend } from "../bridge";
 import { displayDate, errorText, mergeComments } from "../domain";
@@ -20,6 +20,7 @@ export interface DraftSnapshot {
   body: string;
 }
 export function CommentText({ value }: { value: string }) {
+  if (typeof value !== "string") return null;
   const names = officialEmojis as Record<string, string>;
   return (
     <>
@@ -56,8 +57,8 @@ export function DeviceSource({ value }: { value: DeviceTail | string }) {
           } as CSSProperties}
         >{value.name}</span>
       )}
-      {value.extraTails?.map((extra, index) =>
-        extra.name ? <span key={index}> · <DeviceSource value={extra} /></span> : null,
+      {(Array.isArray(value.extraTails) ? value.extraTails : []).map((extra, index) =>
+        extra?.name ? <span key={index}> · <DeviceSource value={extra} /></span> : null,
       )}
     </>
   );
@@ -70,6 +71,7 @@ function Thread({
   onError,
   onImage,
   onLogin,
+  loggedIn,
   readOnly = false,
   blockedIds,
 }: {
@@ -80,20 +82,19 @@ function Thread({
   onError: (s: string) => void;
   onImage: (sourceUrl: string, displayUrl?: string) => void;
   onLogin: () => void;
+  loggedIn: boolean;
   readOnly?: boolean;
   blockedIds: Set<number>;
 }) {
   const [children, setChildren] = useState(comment.children || []);
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [vote, setVote] = useState({
-    count: comment.support,
-    active: comment.voteStatus === 1,
-  });
+  const [vote, setVote] = useState({ support: comment.support || 0, against: comment.against || 0, type: comment.voteStatus || 0 });
+  const voting = useRef(false);
   const visibleChildren = children.filter((child) => !blockedIds.has(child.userInfo?.id));
   const knownChildren = expanded ? visibleChildren : visibleChildren.slice(0, 3);
   useEffect(() => {
-    setVote({ count: comment.support, active: comment.voteStatus === 1 });
+    setVote({ support: comment.support || 0, against: comment.against || 0, type: comment.voteStatus || 0 });
     setChildren(comment.children || []);
     setExpanded(false);
   }, [comment]);
@@ -113,21 +114,23 @@ function Thread({
       setLoading(false);
     }
   }
-  async function voteClick() {
+  async function voteClick(type: 1 | 2) {
+    if (!loggedIn) { onLogin(); return; }
+    if (readOnly || voting.current) return;
+    if (vote.type && vote.type !== type) { onError("请先取消原有投票，再选择另一种态度"); return; }
+    voting.current = true;
     setLoading(true);
     try {
-      const result = await backend.vote(comment.id, vote.active);
-      const count = Number(result.message);
-      setVote({
-        count: Number.isFinite(count)
-          ? count
-          : vote.count + (vote.active ? -1 : 1),
-        active: !vote.active,
-      });
+      const cancel = vote.type === type;
+      const result = await backend.vote(comment.id, cancel, type);
+      const count = result.message === undefined || result.message === "" ? NaN : Number(result.message);
+      const key = type === 1 ? "support" : "against";
+      setVote({ ...vote, [key]: Number.isFinite(count) ? Math.max(0, count) : Math.max(0, vote[key] + (cancel ? -1 : 1)), type: cancel ? 0 : type });
     } catch (e) {
       onError(errorText(e));
       if (errorText(e).includes("登录")) onLogin();
     } finally {
+      voting.current = false;
       setLoading(false);
     }
   }
@@ -202,18 +205,21 @@ function Thread({
           <Button
             appearance="subtle"
             size="small"
-            icon={<ThumbLikeRegular />}
-            aria-pressed={vote.active}
-            onClick={() => void voteClick()}
+            className="comment-support"
+            aria-label={`支持评论 ${comment.id}`}
+            aria-pressed={vote.type === 1}
+            onClick={() => void voteClick(1)}
             disabled={loading || readOnly}
           >
-            {vote.count || "赞"}
+            {vote.type === 1 ? "取消支持" : "支持"}({vote.support})
           </Button>
+          <Button className="comment-against" aria-label={`反对评论 ${comment.id}`} appearance="subtle" size="small" aria-pressed={vote.type === 2} onClick={() => void voteClick(2)} disabled={loading || readOnly}>{vote.type === 2 ? "取消反对" : "反对"}({vote.against})</Button>
           <Button
             appearance="subtle"
             size="small"
             icon={<ArrowReplyRegular />}
             onClick={() => onReply(comment)}
+            disabled={readOnly || loading}
           >
             回复
           </Button>
@@ -233,6 +239,7 @@ function Thread({
               onError={onError}
               onImage={onImage}
               onLogin={onLogin}
+              loggedIn={loggedIn}
               readOnly={readOnly}
               blockedIds={blockedIds}
             />
@@ -265,6 +272,9 @@ export default function Comments({
   readOnly = false,
   blockedIds,
   showComposer = true,
+  composeRequest = 0,
+  onInCommentsChange,
+  onCountChange,
 }: {
   article: Article;
   profile: Profile;
@@ -276,6 +286,9 @@ export default function Comments({
   readOnly?: boolean;
   blockedIds: Set<number>;
   showComposer?: boolean;
+  composeRequest?: number;
+  onInCommentsChange?: (visible: boolean) => void;
+  onCountChange?: (id: number, count: number) => void;
 }) {
   const [page, setPage] = useState<CommentsPage | null>(null);
   const [error, setError] = useState("");
@@ -288,6 +301,7 @@ export default function Comments({
   const [sending, setSending] = useState(false);
   const [saved, setSaved] = useState(false);
   const [composing, setComposing] = useState(false);
+  const sendPending = useRef(false);
   const context = useRef(0);
   const generation = useRef(0);
   const pending = useRef<DraftSnapshot | null>(null);
@@ -297,6 +311,28 @@ export default function Comments({
   const ready = useRef(false);
   const head = useRef<HTMLDivElement>(null);
   const loadMore = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const root = head.current?.closest(".detail-pane");
+    if (!root) return;
+    let frame = 0;
+    const update = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (!head.current) return;
+        const area = root.getBoundingClientRect();
+        const comments = head.current.getBoundingClientRect();
+        const atEnd = root.scrollTop + root.clientHeight >= root.scrollHeight - 2;
+        // Short/empty comment lists cannot always reach the top of the viewport.
+        onInCommentsChange?.((comments.top <= area.top + Math.min(100, area.height * .2) || atEnd && comments.top < area.bottom - 100) && comments.bottom > area.top);
+      });
+    };
+    root.addEventListener("scroll", update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(root); observer.observe(head.current!); update();
+    return () => { cancelAnimationFrame(frame); root.removeEventListener("scroll", update); observer.disconnect(); onInCommentsChange?.(false); };
+  }, [onInCommentsChange]);
+  useEffect(() => { if (composeRequest) void changeReply(null); }, [composeRequest]);
+  useEffect(() => { setComposing(false); }, [profile.id]);
   const flush = async () => {
     if (timer.current) clearTimeout(timer.current);
     const snapshot = pending.current;
@@ -370,6 +406,10 @@ export default function Comments({
         tab === "earliest",
       );
       if (token !== generation.current) return;
+      const floors = [...(value.comments || []), ...(value.hotComments || [])].map((comment) => Number(comment.floorStr?.match(/\d+/)?.[0]) || 0);
+      // The App contract uses hotCount as its displayed total, including replies.
+      const knownCount = Number.isSafeInteger(value.hotCount) && value.hotCount! >= 0 ? value.hotCount! : Math.max(article.item.comments, ...floors);
+      if (!append) onCountChange?.(article.item.id, knownCount);
       setPage((old) => ({
         ...value,
         comments: append
@@ -421,6 +461,9 @@ export default function Comments({
     }, 350);
   }
   async function changeReply(value: OfficialComment | null) {
+    if (readOnly) { onError("只读模式已开启，请在设置中关闭后操作"); return; }
+    if (!profile.id) { onLogin(); return; }
+    if (article.item.forbidComment || (page && !page.canComment)) { onError(page?.cannotCommentTip || "本文已关闭评论"); return; }
     try {
       await flush();
       setReply(value);
@@ -430,6 +473,7 @@ export default function Comments({
     }
   }
   async function send() {
+    if (sendPending.current || saved || !ready.current) return;
     if (readOnly) { onError("只读模式已开启，请在设置中关闭后操作"); return; }
     if (!profile.id) {
       setComposing(false);
@@ -437,6 +481,7 @@ export default function Comments({
       return;
     }
     if (!body.trim()) return;
+    sendPending.current = true;
     setSending(true);
     try {
       await flush();
@@ -465,11 +510,16 @@ export default function Comments({
     } catch (e) {
       onError(errorText(e));
     } finally {
+      sendPending.current = false;
       setSending(false);
     }
   }
   const list = page?.comments || [];
   const allowed = !article.item.forbidComment && (!page || page.canComment);
+  async function closeComposer() {
+    if (sendPending.current) return;
+    try { await flush(); setComposing(false); } catch (e) { onError(errorText(e)); }
+  }
   return (
     <section className="comments" ref={head} aria-label="家友评论">
       <div className="comments-header">
@@ -518,7 +568,7 @@ export default function Comments({
           {page.hotComments.filter((comment) => !blockedIds.has(comment.userInfo?.id)).map((comment) => (
             <Thread key={comment.id} comment={comment} article={article}
               onReply={(value) => void changeReply(value)} onError={onError}
-              onImage={onImage} onLogin={onLogin} readOnly={readOnly} blockedIds={blockedIds} />
+              onImage={onImage} onLogin={onLogin} loggedIn={!!profile.id} readOnly={readOnly} blockedIds={blockedIds} />
           ))}
         </div>
       )}
@@ -532,6 +582,7 @@ export default function Comments({
           onError={onError}
           onImage={onImage}
           onLogin={onLogin}
+          loggedIn={!!profile.id}
           readOnly={readOnly}
           blockedIds={blockedIds}
         />
@@ -551,17 +602,17 @@ export default function Comments({
       )}
       </div>
       {composing && <Dialog open onOpenChange={(_, data) => {
-        if (!data.open) void flush().then(() => setComposing(false)).catch((error) => onError(errorText(error)));
+        if (!data.open) void closeComposer();
       }}><DialogSurface className="compose-dialog"><DialogBody>
-        <DialogTitle>{reply ? `回复 ${reply.userInfo.userNick}` : "写评论"}</DialogTitle>
+        <DialogTitle action={<Button appearance="subtle" icon={<DismissRegular />} aria-label="关闭评论" disabled={sending} onClick={() => void closeComposer()} />}>{reply ? `回复 ${reply.userInfo?.userNick || "家友"}` : "写评论"}</DialogTitle>
         <DialogContent><div className="composer">
         {reply && (
           <div className="composer-reply">
-            回复 {reply.userInfo.userNick} · {reply.floorStr}
+            回复 {reply.userInfo?.userNick || "家友"} · {reply.floorStr}
             <Button
               appearance="subtle"
               size="small"
-              onClick={() => void changeReply(null)}
+              onClick={() => void closeComposer()}
             >
               取消回复
             </Button>
@@ -603,7 +654,7 @@ export default function Comments({
           </Button>
         </div>
       </div></DialogContent>
-      <DialogActions><Button onClick={() => void flush().then(() => setComposing(false)).catch((error) => onError(errorText(error)))}>暂存并关闭</Button></DialogActions>
+      <DialogActions><Button disabled={sending} aria-label="取消评论" onClick={() => void closeComposer()}>取消</Button></DialogActions>
       </DialogBody></DialogSurface></Dialog>}
     </section>
   );

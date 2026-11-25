@@ -2,6 +2,7 @@ mod api;
 mod account;
 mod auth;
 mod community;
+mod desktop;
 mod error;
 mod models;
 mod store;
@@ -27,6 +28,22 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
 struct AppState {
     api: Arc<Api>,
     warnings: Vec<String>,
+    notices: tokio::sync::Mutex<NoticeState>,
+}
+#[derive(Default)]
+struct NoticeState {
+    account: u64,
+    day: String,
+    previous: Option<Value>,
+    news: std::collections::HashSet<u64>,
+    updated: u64,
+}
+
+async fn deliver_notice(app: AppHandle, title: String, body: String, image: Option<String>, target: String) -> Result<()> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || { let _ = sender.send(desktop::show_notice(&handle, &title, &body, image.as_deref(), &target)); }).map_err(AppError::storage)?;
+    receiver.await.map_err(AppError::storage)?
 }
 fn local(window: &WebviewWindow) -> Result<()> {
     if window.label() == "main" {
@@ -122,6 +139,85 @@ async fn circle_action(window: WebviewWindow, state: State<'_, AppState>, kind: 
     state.api.circle_action(&kind, id, reply, topic, &body, enabled).await
 }
 #[tauri::command]
+async fn device_tail(window: WebviewWindow, state: State<'_, AppState>, mode: String) -> Result<Value> {
+    local(&window)?;
+    state.api.device_tail(&mode).await
+}
+#[tauri::command]
+async fn badge_counts(window: WebviewWindow, state: State<'_, AppState>) -> Result<Value> {
+    local(&window)?;
+    state.api.badge_counts().await
+}
+#[tauri::command]
+async fn message_read(window: WebviewWindow, state: State<'_, AppState>, kind: String, id: i32) -> Result<()> {
+    local(&window)?;
+    state.api.message_read(&kind, id).await
+}
+#[tauri::command]
+async fn notice_sync(window: WebviewWindow, app: AppHandle, state: State<'_, AppState>, date: String) -> Result<Value> {
+    local(&window)?;
+    let mut notices = state.notices.lock().await;
+    let settings = state.api.store.settings()?;
+    let generation = state.api.auth.generation.load(std::sync::atomic::Ordering::SeqCst);
+    let account = state.api.auth.profile()?.id;
+    let badges = state.api.badge_counts().await?;
+    if !settings.notifications_enabled {
+        *notices = NoticeState::default();
+        return Ok(serde_json::json!({"badges":badges,"notificationError":""}));
+    }
+    let now = store::now();
+    let baseline = notices.previous.is_none() || notices.account != account || now.saturating_sub(notices.updated) > 600;
+    let mut error = String::new();
+    let mut pending: Vec<(String, String, String, String)> = Vec::new();
+    if settings.notify_news {
+        match state.api.pushed_news(&date).await {
+            Ok(news) => {
+                let day_changed = notices.day != date;
+                if day_changed { notices.news.clear(); notices.day = date; }
+                for post in news {
+                    let id = post["id"].as_u64().unwrap_or(0);
+                    let unseen = notices.news.insert(id);
+                    if unseen && !baseline && !day_changed && pending.len() < 2 {
+                        pending.push((post["title"].as_str().unwrap_or("IT之家推送").into(), post["summary"].as_str().unwrap_or("").chars().take(200).collect(), post["image"].as_str().unwrap_or("").into(), format!("news:{id}")));
+                    }
+                }
+            }
+            Err(e) => error = e.message,
+        }
+    }
+    if !baseline && settings.notify_replies {
+        for (key, kind, title) in [("comments", "news-replies", "新闻评论有新回复"), ("posts", "circle-replies", "圈子帖子有新回复")] {
+            if badges[key].as_u64().unwrap_or(0) > notices.previous.as_ref().and_then(|v| v[key].as_u64()).unwrap_or(0) {
+                let mut body = "打开查看家友回复".to_string();
+                if let Ok(data) = state.api.message_data(kind, 0, 1, 0, "").await {
+                    let row = data.as_array().and_then(|a| a.first()).or_else(|| data["list"].as_array().and_then(|a| a.first()));
+                    let elements = row.and_then(|v| if kind == "news-replies" { v["comment"]["elements"].as_array() } else { v["contents"].as_array() });
+                    if let Some(elements) = elements { body = elements.iter().filter_map(|v| v["content"].as_str()).collect::<String>().chars().take(200).collect(); }
+                }
+                pending.push((title.into(), body, String::new(), format!("messages:{kind}")));
+            }
+        }
+    }
+    if !baseline && settings.notify_messages && badges["messages"].as_u64().unwrap_or(0) > notices.previous.as_ref().and_then(|v| v["messages"].as_u64()).unwrap_or(0) {
+        pending.push(("IT之家有新的会话或通知".into(), "打开消息中心查看".into(), String::new(), "messages:conversations".into()));
+    }
+    state.api.auth.ensure_generation(generation)?;
+    for (title, body, image, target) in pending {
+        let image = if image.is_empty() { None } else { state.api.image(&image).await.ok().and_then(|path| Url::from_file_path(path).ok()).map(|u| u.to_string()) };
+        if state.api.auth.ensure_generation(generation).is_err() || !state.api.store.settings()?.notifications_enabled { break; }
+        if let Err(e) = deliver_notice(app.clone(), title, body, image, target).await { error = e.message; break; }
+    }
+    notices.previous = Some(badges.clone()); notices.updated = now; notices.account = account;
+    Ok(serde_json::json!({"badges":badges,"notificationError":error}))
+}
+#[tauri::command]
+async fn test_notification(window: WebviewWindow, app: AppHandle, state: State<'_, AppState>) -> Result<()> {
+    local(&window)?;
+    let icon = state.api.store.root.join("cache/images/notification-preview.png");
+    std::fs::write(&icon, include_bytes!("../icons/128x128.png")).map_err(AppError::storage)?;
+    deliver_notice(app, "IT之家第三方客户端 · 通知测试".into(), "图文通知已接通，点击可打开消息中心。".into(), Url::from_file_path(icon).ok().map(|u|u.to_string()), "messages:conversations".into()).await
+}
+#[tauri::command]
 async fn user_data(window: WebviewWindow, state: State<'_, AppState>, kind: String, id: u64, page: u32, cursor: u64) -> Result<Value> {
     local(&window)?;
     state.api.user_data(&kind, id, page, cursor).await
@@ -215,9 +311,10 @@ async fn vote_comment(
     state: State<'_, AppState>,
     id: u64,
     cancel: bool,
+    r#type: Option<u8>,
 ) -> Result<Value> {
     local(&window)?;
-    state.api.vote(id, cancel).await
+    state.api.vote(id, cancel, r#type.unwrap_or(1)).await
 }
 #[tauri::command]
 async fn search_news(
@@ -629,12 +726,17 @@ pub fn run() {
                 Auth::empty()
             }));
             let api = Arc::new(Api::new(store, auth).map_err(|e| e.message)?);
-            app.manage(AppState { api, warnings });
+            app.manage(AppState { api, warnings, notices: tokio::sync::Mutex::new(NoticeState::default()) });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             message_data,
             circle_action,
+            device_tail,
+            badge_counts,
+            message_read,
+            notice_sync,
+            test_notification,
             user_data,
             account_data,
             account_action,

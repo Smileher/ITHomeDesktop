@@ -68,6 +68,8 @@ try {
         next: 0,
         circleDrafts: {},
         failCircleWrite: false,
+        badges: { comments: 4, posts: 2, messages: 3 },
+        newsDrafts: JSON.parse(sessionStorage.getItem("fixture-news-drafts") || "{}"),
       };
       window.__fixture = state;
       const item = {
@@ -120,6 +122,18 @@ try {
           return value;
         },
         async invoke(command, args = {}) {
+          if (command === "notice_sync") return { badges: { ...state.badges }, notificationError: "" };
+          if (command === "badge_counts") return { ...state.badges };
+          if (command === "message_read") {
+            state.calls.push({ command, ...args });
+            if (args.kind === "news-replies") state.badges.comments = 0;
+            if (args.kind === "circle-replies") state.badges.posts = 0;
+            return;
+          }
+          if (command === "device_tail") return { official: { deviceName: "Windows客户端" }, detectedModel: "测试电脑型号" };
+          if (command === "test_notification") { state.calls.push({ command }); return; }
+          if (command === "vote_comment") { state.calls.push({ command, ...args }); return { success: true, message: args.cancel ? "0" : "1" }; }
+          if (command === "save_draft") { state.newsDrafts[`${args.id}:${args.reply}`] = args.body; sessionStorage.setItem("fixture-news-drafts", JSON.stringify(state.newsDrafts)); return; }
           if (command === "plugin:event|listen") {
             state.listeners[args.event] = args.handler;
             return ++state.next;
@@ -145,7 +159,7 @@ try {
             return {
               data: {
                 item,
-                html: "<p>本文用于界面回归验证。</p>",
+                html: "<p>本文用于界面回归验证，正文滚动与评论入口单独检查。</p>".repeat(18),
                 author: "测试",
                 source: "测试",
                 sn: "fixture",
@@ -156,6 +170,7 @@ try {
           if (command === "get_comments")
             return {
               newsId: 1000,
+              hotCount: 53,
               userId: 1,
               canComment: true,
               ruleHint: "测试",
@@ -163,7 +178,7 @@ try {
               hotComments: [comment(1, 1), comment(2, 2)],
             };
           if (command === "local_items") return [];
-          if (command === "get_draft") return "";
+          if (command === "get_draft") return state.newsDrafts[`${args.id}:${args.reply}`] || "";
           if (command === "get_circle_draft") return state.circleDrafts[`${args.id}:${args.reply}:${args.topic}`] || "";
           if (command === "save_circle_draft") {
             state.circleDrafts[`${args.id}:${args.reply}:${args.topic}`] = args.body;
@@ -172,8 +187,8 @@ try {
           if (command === "message_data") {
             if (args.kind === "unread") return { totalCount: 3 };
             if (args.kind === "conversations") return [{ id: 1, anotherUserId: -1, summary: "系统消息测试摘要", lastTime: "2026-11-24T12:00:00", notReadMessageCount: 1, anotherUserBaseInfoModel: { id: -1, userNick: "通知测试" } }];
-            if (args.kind === "conversation") return [{ messageId: 2, fromUserId: -1, contentType: 2, systemNotifyElements: [{ type: 0, content: "通知测试正文" }], createTime: "2026-11-24T12:00:00" }];
-            if (args.kind === "news-replies") return [{ comment: comment(3, 1), news: { id: 1000, title: "界面回归测试文章" } }];
+            if (args.kind === "conversation") return Array.from({length:21},(_,i)=>({ messageId: i+2, fromUserId: -1, contentType: 2, systemNotifyElements: [{ type: 0, content: i ? `通知测试正文 ${i}` : "通知测试正文" }], createTime: "2026-11-24T12:00:00" }));
+            if (args.kind === "news-replies") return Array.from({length:21},(_,i)=>({ comment: i===1 ? null : comment(i===0 ? 0 : i+3, 1), news: { id: 1000, title: "界面回归测试文章" } }));
             return { current: 1, total: 1, pageSize: 20, list: [{ id: 9, contentId: 77, user: { id: 1, userNick: "测试圈子回复" }, contents: [{ type: 0, content: "圈子回复测试" }], createTime: "2026-11-24T12:00:00" }] };
           }
           if (command === "get_circle") {
@@ -256,9 +271,20 @@ try {
   assert.equal(await fixture.getByRole("textbox", { name: "评论草稿" }).count(), 0);
   await fixture.locator(".toolbar-comment").click();
   assert.equal(await fixture.getByRole("textbox", { name: "评论草稿" }).count(), 0);
-  await fixture.locator(".comments").getByRole("button", { name: "写评论", exact: true }).click();
+  await fixture.waitForFunction(() => document.querySelector(".comments")?.getBoundingClientRect().top < 180);
+  await fixture.waitForFunction(() => document.querySelector(".toolbar-comment")?.getAttribute("aria-label") === "写评论");
+  assert.equal(await fixture.locator(".toolbar-comment .comment-count").innerText(), "53");
+  await fixture.locator(".toolbar-comment").click();
   await fixture.getByRole("textbox", { name: "评论草稿" }).waitFor();
-  await fixture.getByRole("button", { name: "暂存并关闭", exact: true }).click();
+  await fixture.getByRole("textbox", { name: "评论草稿" }).fill("新闻评论草稿恢复测试");
+  await fixture.getByRole("button", { name: "取消评论", exact: true }).click();
+  await fixture.locator(".toolbar-comment").click();
+  await fixture.waitForFunction(() => document.querySelector('[aria-label="评论草稿"]')?.value === "新闻评论草稿恢复测试");
+  await fixture.getByRole("button", { name: "关闭评论", exact: true }).click();
+  await fixture.reload();
+  await fixture.locator(".comments").getByRole("button", { name: "写评论", exact: true }).click();
+  await fixture.waitForFunction(() => document.querySelector('[aria-label="评论草稿"]')?.value === "新闻评论草稿恢复测试");
+  await fixture.getByRole("button", { name: "取消评论", exact: true }).click();
   const feedWidth = (await fixture.locator(".feed-pane").boundingBox()).width;
   const handle = await fixture.locator(".splitter").boundingBox();
   await fixture.mouse.move(handle.x + handle.width / 2, 200);
@@ -307,11 +333,14 @@ try {
   await fixture.locator(".account-row").nth(20).waitFor();
   const topbar = await fixture.locator(".topbar").boundingBox();
   assert.ok(topbar.x + topbar.width >= 1278, "Account header must cover the content width");
-  await fixture.locator(".detail-pane").evaluate((element) => { element.scrollTop = 600; });
+  const beforeShortcuts = await fixture.locator(".account-shortcuts").boundingBox();
+  const beforeMenu = await fixture.locator(".account-menu").boundingBox();
+  await fixture.locator(".account-content").evaluate((element) => { element.scrollTop = 600; });
   const fixed = await fixture.locator(".account-shortcuts").boundingBox();
-  const scroller = await fixture.locator(".detail-pane").boundingBox();
-  assert.ok(Math.abs(fixed.y - scroller.y) <= 2, "Four account shortcuts must remain pinned");
-  await fixture.locator(".detail-pane").evaluate((element) => { element.scrollTop = 0; });
+  assert.ok(Math.abs(fixed.y - beforeShortcuts.y) <= 1, "Four account shortcuts must remain fixed");
+  assert.equal((await fixture.locator(".account-menu").boundingBox()).y, beforeMenu.y, "Side menu must not scroll with account content");
+  assert.equal(await fixture.locator(".detail-pane").evaluate((element) => element.scrollTop), 0);
+  await fixture.locator(".account-content").evaluate((element) => { element.scrollTop = 0; });
   await fixture
     .getByRole("button", { name: "取消收藏", exact: true })
     .first()
@@ -337,8 +366,13 @@ try {
   await fixture.getByText("未读 3", { exact: true }).waitFor();
   await fixture.locator(".message-summary").click();
   await fixture.getByText("通知测试正文", { exact: true }).waitFor();
+  const detailHeader = await fixture.locator(".message-detail-heading").boundingBox();
+  const tabsBefore = await fixture.locator(".message-tabs").boundingBox();
+  await fixture.locator(".message-list").evaluate((element) => { element.scrollTop = 900; });
+  assert.equal((await fixture.locator(".message-detail-heading").boundingBox()).y, detailHeader.y);
+  assert.equal((await fixture.locator(".message-tabs").boundingBox()).y, tabsBefore.y);
   await fixture.getByRole("tab", { name: "新闻回复", exact: true }).click();
-  await fixture.locator(".message-reply").waitFor();
+  await fixture.locator(".message-reply").first().waitFor();
   await fixture.getByRole("tab", { name: "圈子回复", exact: true }).click();
   await fixture.getByText("圈子回复测试", { exact: true }).waitFor();
   await fixture.screenshot({ path: "test-results/messages-fixture.png" });
@@ -387,6 +421,14 @@ try {
     .getByRole("button", { name: "设置", exact: true })
     .last()
     .click();
+  await fixture.locator(".settings-sections").getByRole("button", { name: "账号", exact: false }).click();
+  await fixture.getByRole("combobox", { name: "尾巴模式", exact: true }).selectOption("windows");
+  await fixture.waitForFunction(() => window.__fixture.settings.deviceTailMode === "windows");
+  await fixture.getByText("Windows客户端", { exact: true }).waitFor();
+  await fixture.locator(".settings-sections").getByRole("button", { name: "通知", exact: false }).click();
+  await fixture.getByRole("switch", { name: "通知总开关", exact: true }).click();
+  await fixture.getByRole("button", { name: "发送测试通知", exact: true }).click();
+  assert.ok(await fixture.evaluate(() => window.__fixture.calls.some((call) => call.command === "test_notification")));
   await fixture.locator(".settings-sections").getByRole("button", { name: "账号", exact: false }).click();
   await fixture.getByRole("switch", { name: "只读模式", exact: true }).click();
   assert.equal(

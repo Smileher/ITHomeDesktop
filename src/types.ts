@@ -16,6 +16,11 @@ export interface Settings {
   pinnedCard: boolean;
   circleGrid: boolean;
   validateSessionOnStart: boolean;
+  deviceTailMode: "official" | "windows" | "detected";
+  notificationsEnabled: boolean;
+  notifyNews: boolean;
+  notifyReplies: boolean;
+  notifyMessages: boolean;
 }
 export interface Profile {
   id: number;
@@ -94,6 +99,7 @@ export interface DeviceTail {
 }
 export interface CommentsPage {
   newsId: number;
+  hotCount?: number;
   userId: number;
   userNick: string | null;
   canComment: boolean;
@@ -162,6 +168,11 @@ export const defaultSettings: Settings = {
   pinnedCard: true,
   circleGrid: true,
   validateSessionOnStart: true,
+  deviceTailMode: "official",
+  notificationsEnabled: false,
+  notifyNews: true,
+  notifyReplies: true,
+  notifyMessages: false,
 };
 export const channels = [
   { id: "news", name: "最新" },

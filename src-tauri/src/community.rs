@@ -3,6 +3,79 @@ use serde_json::{json, Value};
 use url::Url;
 
 impl Api {
+    pub async fn badge_counts(&self) -> Result<Value> {
+        if self.auth.profile()?.id == 0 { return Ok(json!({"comments":0,"posts":0,"messages":0})); }
+        let (generation, token, _) = self.credential().await?;
+        let id = self.auth.profile()?.id;
+        let encoded = crate::api::app_comment_sn(id)?.to_ascii_uppercase();
+        let url = Url::parse(&format!("https://cmt.ithome.com/api/commentnotify/{encoded}")).unwrap();
+        let value = response_json(self.account_headers(self.client.get(url.clone()), &url, &token)?).await?;
+        let data = value.get("data").unwrap_or(&value);
+        let count = |name: &str| -> Result<u64> {
+            data.get(name).and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                .ok_or_else(|| AppError::new("protocol", "未读计数响应格式已变化"))
+        };
+        let comments = count("Rcc")?;
+        let posts = count("Rrc")?;
+        let unread = self.message_data("unread", 0, 1, 0, "").await?;
+        self.auth.ensure_generation(generation)?;
+        Ok(json!({"comments":comments,"posts":posts,"messages":unread.get("totalCount").and_then(Value::as_u64).unwrap_or(0)}))
+    }
+
+    pub async fn message_read(&self, kind: &str, id: i32) -> Result<()> {
+        let _write = self.writes.lock().await;
+        if self.store.settings()?.read_only { return Err(AppError::new("readonly", "只读模式下保留官方未读状态")); }
+        let (generation, token, hash) = self.credential().await?;
+        let encoded = crate::api::app_comment_sn(self.auth.profile()?.id)?.to_ascii_uppercase();
+        let mut url = match kind {
+            "news-replies" => Url::parse(&format!("https://cmt.ithome.com/api/commentnotifyclear/{encoded}")).unwrap(),
+            "circle-replies" => Url::parse(&format!("https://cmt.ithome.com/api/replynotifyclear/{encoded}")).unwrap(),
+            "conversation" if id != 0 => Url::parse(&format!("https://chat.ithome.com/api/message/read?anotherUserId={id}&appver=1.0&platform=windows")).unwrap(),
+            _ => return Err(AppError::new("validation", "已读类型无效")),
+        };
+        if kind == "conversation" { url.query_pairs_mut().append_pair("userhash", if hash.is_empty() { &token } else { &hash }); }
+        // Mark only the opened category/conversation; never clear unrelated messages.
+        let response = self.account_headers(self.client.get(url.clone()), &url, &token)?.send().await.map_err(|_| AppError::new("network", "已读状态未同步，请稍后刷新"))?;
+        if !response.status().is_success() { return Err(AppError::new("server", "官方服务未确认已读状态")); }
+        let text = response.text().await.map_err(AppError::storage)?;
+        if serde_json::from_str::<Value>(&text).ok().is_some_and(|v| v["success"] == false) {
+            return Err(AppError::new("server", "官方服务未确认已读状态"));
+        }
+        self.auth.ensure_generation(generation)
+    }
+
+    pub async fn pushed_news(&self, date: &str) -> Result<Vec<Value>> {
+        let parts: Vec<_> = date.split('-').collect();
+        if parts.len() != 3 || parts[0].len() != 4 || date.len() > 10 || !date.chars().all(|c| c.is_ascii_digit() || c == '-') {
+            return Err(AppError::new("validation", "推送日期无效"));
+        }
+        let mut url = Url::parse("https://napi.ithome.com/api/news/getdaypushednewsfeed").unwrap();
+        url.query_pairs_mut().append_pair("date", date);
+        let value = response_json(self.client.get(url)).await?;
+        let list = value["data"]["list"].as_array().ok_or_else(|| AppError::new("protocol", "官方推送列表格式已变化"))?;
+        Ok(list.iter().filter_map(|row| {
+            let post = &row["feedContent"];
+            let id = post["id"].as_u64()?;
+            let title = post["title"].as_str()?;
+            if validate_id(id).is_err() || title.is_empty() { return None; }
+            Some(json!({"id":id,"title":title,"summary":post["newsMemo"].as_str().unwrap_or(""),"image":post["images"][0].as_str().unwrap_or("")}))
+        }).collect())
+    }
+
+    pub async fn device_tail(&self, mode: &str) -> Result<Value> {
+        let device = crate::desktop::tail_device(mode)?;
+        let url = Url::parse("https://cmt.ithome.com/api/devicetail/getdeviceinfo").unwrap();
+        let value = response_json(
+            self.client
+                .post(url.clone())
+                .header(reqwest::header::REFERER, "https://www.ithome.com/")
+                .header("Origin", "https://www.ithome.com")
+                .json(&json!({ "client": 10, "device": device })),
+        ).await?;
+        let data = value.get("data").or_else(|| value.get("content")).or_else(|| value.get("result")).cloned().unwrap_or(value);
+        Ok(json!({"official":data,"detectedModel":crate::desktop::detected_model(),"submittedDevice":device}))
+    }
+
     pub async fn message_data(&self, kind: &str, id: i32, page: u32, cursor: u64, stamp: &str) -> Result<Value> {
         if page == 0 || page > 500 || stamp.len() > 100 || stamp.contains(['\r', '\n']) {
             return Err(AppError::new("validation", "消息分页参数无效"));
@@ -38,10 +111,16 @@ impl Api {
     }
 
     pub async fn circle_action(&self, kind: &str, id: u64, reply: u64, topic: u64, body: &str, enabled: bool) -> Result<Value> {
-        let (path, payload) = circle_request(kind, id, reply, topic, body, enabled)?;
+        let (path, mut payload) = circle_request(kind, id, reply, topic, body, enabled)?;
         let _write = self.writes.lock().await;
         if self.store.settings()?.read_only {
             return Err(AppError::new("readonly", "只读模式已开启，请在设置中关闭后操作"));
+        }
+        if ["post", "reply"].contains(&kind) {
+            if let Some(device) = crate::desktop::tail_device(&self.store.settings()?.device_tail_mode)? {
+                payload["device"] = json!(device);
+                payload["ithomeCommentClient"] = json!(10);
+            }
         }
         let (generation, token, _) = self.credential().await?;
         let mut url = Url::parse(&format!("https://qapi.ithome.com{path}")).unwrap();
@@ -114,12 +193,14 @@ mod tests {
             let mut settings = Settings::default();
             settings.read_only = true;
             store.save_settings(&settings).unwrap();
+            assert_eq!(api.message_read("news-replies", 0).await.unwrap_err().code, "readonly");
             for (kind, id, topic, body) in [("post", 0, 4030, "测试"), ("reply", 917306, 0, "测试"), ("vote-post", 917306, 0, ""), ("vote-comment", 6789375, 0, ""), ("favorite", 917306, 0, "")] {
                 assert_eq!(api.circle_action(kind, id, 0, topic, body, true).await.unwrap_err().code, "readonly");
             }
             settings.read_only = false;
             store.save_settings(&settings).unwrap();
             assert_eq!(api.circle_action("post", 0, 0, 4030, "测试", true).await.unwrap_err().code, "login");
+            assert_eq!(api.message_read("news-replies", 0).await.unwrap_err().code, "login");
             drop(api); drop(store);
             let _ = std::fs::remove_dir_all(root);
         });
@@ -133,11 +214,23 @@ mod tests {
             let root = std::env::temp_dir().join(format!("ithome-message-probe-{}", std::process::id()));
             let session = std::env::var("ITHOME_ACCOUNT_SESSION_DIR").unwrap();
             let api = Api::new(Arc::new(Store::open(root.clone()).unwrap()), Arc::new(Auth::load(std::path::Path::new(&session)).unwrap())).unwrap();
+            let badges = api.badge_counts().await.unwrap();
+            println!("badge fields: {:?}", badges.as_object().unwrap().keys().collect::<Vec<_>>());
+            let tail = api.device_tail("windows").await.unwrap();
+            assert!(tail["official"]["deviceName"].is_string());
+            println!("official tail preview: string; local model available={}", crate::desktop::detected_model().is_some());
+            let pushed = api.pushed_news("2026-11-25").await.unwrap();
+            assert!(!pushed.is_empty());
+            println!("official push feed: readable; image_present={}", pushed.iter().any(|v| v["image"].as_str().is_some_and(|s| !s.is_empty())));
             for kind in ["unread", "conversations", "news-replies", "circle-replies"] {
                 match api.message_data(kind, 0, 1, 0, "").await {
                     Ok(data) => {
                         let rows = data.as_array().or_else(|| data.get("list").and_then(Value::as_array));
                         println!("{kind}: keys={:?}; first_fields={:?}", data.as_object().map(|o| o.keys().collect::<Vec<_>>()), rows.and_then(|r| r.first()).and_then(Value::as_object).map(|o| o.keys().collect::<Vec<_>>()));
+                        if kind == "news-replies" {
+                            println!("news-replies contracts: null_comments={}; comment_fields={:?}; news_fields={:?}", rows.map(|r| r.iter().filter(|v| !v["comment"].is_object()).count()).unwrap_or(0), rows.and_then(|r| r.iter().find_map(|v| v["comment"].as_object())).map(|o| o.keys().collect::<Vec<_>>()), rows.and_then(|r| r.iter().find_map(|v| v["news"].as_object())).map(|o| o.keys().collect::<Vec<_>>()));
+                            println!("news-replies edge counts: zero_id={}; nontext_elements={}; null_user={}", rows.map(|r| r.iter().filter(|v| v["comment"]["id"].as_u64().unwrap_or(0) == 0).count()).unwrap_or(0), rows.map(|r| r.iter().filter(|v| v["comment"]["elements"].as_array().is_some_and(|a| a.iter().any(|e| !e["content"].is_null() && !e["content"].is_string()))).count()).unwrap_or(0), rows.map(|r| r.iter().filter(|v| !v["comment"]["userInfo"].is_object()).count()).unwrap_or(0));
+                        }
                         if kind == "conversations" {
                             if let Some(id) = rows.and_then(|r| r.first()).and_then(|r| r.get("anotherUserId")).and_then(Value::as_i64) {
                                 println!("conversation identity: signed integer, system={}", id < 0);

@@ -20,7 +20,15 @@ pub struct Settings {
     pub pinned_card: bool,
     pub circle_grid: bool,
     pub validate_session_on_start: bool,
+    pub device_tail_mode: String,
+    pub notifications_enabled: bool,
+    #[serde(default = "default_true")]
+    pub notify_news: bool,
+    #[serde(default = "default_true")]
+    pub notify_replies: bool,
+    pub notify_messages: bool,
 }
+fn default_true() -> bool { true }
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -41,6 +49,11 @@ impl Default for Settings {
             pinned_card: true,
             circle_grid: true,
             validate_session_on_start: true,
+            device_tail_mode: "official".into(),
+            notifications_enabled: false,
+            notify_news: true,
+            notify_replies: true,
+            notify_messages: false,
         }
     }
 }
@@ -53,6 +66,7 @@ impl Settings {
             || !["system", "Microsoft YaHei UI", "SimSun", "Segoe UI"].contains(&self.ui_font.as_str())
             || !["system", "Microsoft YaHei UI", "SimSun", "Segoe UI"].contains(&self.body_font.as_str())
             || !self.line_height.is_finite() || !(1.5..=2.4).contains(&self.line_height)
+            || !["official", "windows", "detected"].contains(&self.device_tail_mode.as_str())
         {
             return Err(crate::error::AppError::new(
                 "invalid_settings",
@@ -60,6 +74,24 @@ impl Settings {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn old_settings_keep_existing_preferences_and_disable_new_notifications() {
+        let settings: super::Settings = serde_json::from_str(r#"{"theme":"dark","rememberLogin":true,"fontSize":19}"#).unwrap();
+        assert_eq!(settings.theme, "dark");
+        assert!(settings.remember_login);
+        assert_eq!(settings.font_size, 19);
+        assert_eq!(settings.device_tail_mode, "official");
+        assert!(!settings.notifications_enabled);
+        assert!(settings.notify_news && settings.notify_replies);
+        assert!(settings.validate().is_ok());
+        let mut invalid = settings;
+        invalid.device_tail_mode = "arbitrary phone".into();
+        assert!(invalid.validate().is_err());
     }
 }
 

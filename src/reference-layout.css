@@ -841,10 +841,14 @@
   .app:has(.official-page) .top-actions, .app:has(.settings-page) .top-actions, .app:has(.circle-page) .top-actions { margin-left: auto; }
 }
 .app .message-page { width: 100%; max-width: 1120px; margin: 0 auto; padding: 22px 28px 90px; }
+.app .message-page { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .app .message-heading { display: flex; align-items: center; gap: 14px; padding-bottom: 18px; }
 .app .message-heading h1 { font-size: 24px; margin: 0; }
 .app .message-heading > button { margin-left: auto; }
 .app .message-tabs { position: sticky; top: 0; z-index: 3; display: flex; gap: 24px; background: var(--paper); border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.app .message-heading, .app .message-tabs, .app .message-detail-heading { flex: 0 0 auto; }
+.app .message-list { min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding-right: 4px; }
+.app .message-detail-heading { background: var(--paper); border-bottom: 1px solid var(--border); }
 .app .message-tabs > button { padding: 14px 2px; background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--muted); font: inherit; cursor: pointer; }
 .app .message-tabs > button[aria-selected=true] { border-bottom-color: var(--accent); color: var(--accent); }
 .app .message-conversation { display: flex; gap: 14px; align-items: center; padding: 18px 0; border-bottom: 1px solid var(--border); }
@@ -870,7 +874,44 @@
 .app .circle-post-actions [aria-pressed=true], .app .circle-counts [aria-pressed=true] { color: var(--accent); }
 .circle-topic-select { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; font-size: 14px; }
 .circle-topic-select select { min-width: 0; flex: 1; background: var(--paper); color: var(--ink); padding: 8px; border: 1px solid var(--border); border-radius: 6px; font: inherit; }
+.app .tail-setting-row strong { display: flex; align-items: center; gap: 7px; }
+.app .tail-setting-row strong svg { width: 18px; height: 18px; color: var(--accent); }
+.app .tail-preview-chip { flex: 0 0 auto; padding: 7px 10px; border-radius: 999px; color: var(--accent); background: var(--accent-soft); font-size: 12px; }
+.app .detail-pane:has(.message-page), .app .detail-pane:has(.settings-page), .app .detail-pane:has(.account-page) { overflow: hidden; }
+.app .settings-page, .app .account-page { height: 100%; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.app .settings-layout, .app .account-layout { min-height: 0; flex: 1 1 auto; }
+.app .settings-content, .app .account-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.app .settings-layout, .app .account-layout { grid-template-rows: minmax(0,1fr); align-items: stretch; }
+.app .settings-sections, .app .account-menu { max-height: 100%; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.app .settings-page > .page-heading, .app .account-header, .app .account-shortcuts, .app .account-disclaimer, .app .message-note { flex: 0 0 auto; }
+.app .settings-content { padding: 0 8px 22px 0; }
+.app .account-content-heading { position: sticky; top: -18px; z-index: 2; padding: 10px 0; background: var(--paper); }
+.app .circle-detail { display: flex; flex-direction: column; overflow: hidden; }
+.app .circle-detail-heading { flex: 0 0 auto; background: var(--canvas); }
+.app .circle-reading { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.app .user-profile { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.app .profile-cover, .app .profile-tabs { flex: 0 0 auto; }
+.app .profile-stream { min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.profile-dialog .user-profile { height: min(65vh,650px); }
+.profile-dialog .profile-stream { overflow-y: auto; min-height: 0; }
+.app .comments .comment-actions { gap: 7px; margin-top: 12px; }
+.app .comments .comment-actions button { padding: 6px 10px; min-height: 32px; border-radius: 6px; }
+.app .comments .comment-actions .comment-support { background: var(--hover); color: #168446; }
+.app .comments .comment-actions .comment-against { background: var(--hover); color: #cf3541; }
+.app.dark .comments .comment-support { color: #45c66e; }
+.app.dark .comments .comment-against { color: #ff6876; }
+.app .comments .comment-actions button[aria-pressed=true] { outline: 1px solid currentColor; outline-offset: -1px; }
 @media(max-width:600px) {
+  .app .settings-layout { display: flex; flex-direction: column; }
+  .app .settings-sections { flex: 0 0 auto; overflow: visible; }
+  .app .settings-content { flex: 1 1 auto; }
+  .app .account-layout { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+  .app .account-content { overflow: visible; flex-shrink: 0; }
+  .app .account-page:has(.account-content-heading) .account-content { overflow-y: auto; min-height: 0; flex: 1 1 auto; }
+  .app .account-menu { overflow: visible; max-height: none; flex: 0 0 auto; }
+  .app .account-layout .user-profile { min-height: 420px; }
+  .app .circle-detail:not(.is-open) { display: none; }
+  .app .circle-detail.is-open { display: flex; }
   .app .message-page { padding: 18px 16px 95px; }
   .app .message-tabs { gap: 22px; font-size: 14px; }
   .app .message-reply { gap: 12px; }
@@ -888,6 +929,9 @@
 .app .account-shortcuts > button { flex-direction: row; min-height: 46px; gap: 9px; font-weight: 500; font-size: 14px; border-radius: 7px; }
 .app .account-shortcuts .fui-Button__icon, .app .account-shortcuts .fui-Button__icon svg { width: 23px; height: 23px; }
 .app .account-shortcuts > button[aria-pressed=true] { background: var(--accent-soft); color: var(--accent); }
+.app .nav-unread-dot, .app .shortcut-unread-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #ed3b4e; box-shadow: 0 0 0 2px var(--paper); }
+.app .nav-unread-dot { position: absolute; top: 10px; right: 23px; }
+.app .shortcut-unread-dot { margin-left: -3px; align-self: flex-start; }
 .app .account-menu { border: 0; padding: 0; background: transparent; }
 .app .account-menu > button { min-height: 44px; }
 .app .account-menu > button:hover { background: var(--paper); }

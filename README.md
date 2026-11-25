@@ -12,8 +12,8 @@ A third-party Windows desktop client for IT Home, with a focused reading layout,
 - Official WeChat / IT Home QR sign-in windows, automatic session sync and encrypted persistence. Phone confirmation and account writes require user validation.
 - Native public circles, topics, post details and replies; official news/post favorites, account comments, posts, following and blacklist management. Account reads have been checked with a real session; account mutation checks use fixtures.
 - Circle text posts, replies, likes and favorites use the official service, with account-scoped local drafts. Automated write checks use fixtures; live publishing requires user validation.
-- Read conversations, unread totals, news replies and circle replies inside the client. Message content stays in memory; background push and private-message sending remain unfinished.
-- The account hub includes local drafts/history and verified official-page shortcuts for the mall, assets, coin tasks, contributions and profile editing. Background notifications remain unfinished.
+- Read conversations, official unread totals, news replies and circle replies inside the client. Message content stays in memory; while the app is running, optional two-minute polling can show official news/reply updates as Windows text/image notifications.
+- The account hub includes local drafts/history and verified official-page shortcuts for the mall, assets, coin tasks, contributions and profile editing. Notification settings expose news, replies and conversation switches.
 - Source labels follow official responses; there is no custom tail or device impersonation.
 - Microsoft Store packaging is provided. Store identity and review are required before Store distribution.
 

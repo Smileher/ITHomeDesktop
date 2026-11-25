@@ -83,6 +83,18 @@ try {
   }
   assert.ok(app);
   await app.waitForFunction(() => !!window.__TAURI_INTERNALS__);
+  // UI reads use the real account. Suppress read markers and automatic toasts in
+  // this test so render regressions never mutate the user's unread state.
+  await app.evaluate(() => {
+    const original = window.__TAURI_INTERNALS__.invoke.bind(window.__TAURI_INTERNALS__);
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      if (command === "message_read") return;
+      if (command === "notice_sync") return { badges: await original("badge_counts"), notificationError: "只读测试不发送通知" };
+      return original(command, args);
+    };
+  });
+  const runtimeErrors = [];
+  app.on("pageerror", (e) => runtimeErrors.push(e.message));
   const call = (command, args = {}) =>
     app.evaluate(
       ({ command, args }) => window.__TAURI_INTERNALS__.invoke(command, args),
@@ -90,6 +102,12 @@ try {
     );
   const boot = await call("bootstrap");
   report.version = boot.version;
+  if (process.env.ITHOME_TEST_TOAST === "1") {
+    report.fixedSampleToast = await app.evaluate(async () => {
+      try { await window.__TAURI_INTERNALS__.invoke("test_notification"); return { accepted: true }; }
+      catch (error) { return { accepted: false, code: error?.code, message: error?.message || String(error) }; }
+    });
+  }
   const news = await call("get_news", {
     channel: "news",
     cursor: null,
@@ -171,6 +189,16 @@ try {
     path: "test-results/native-public-desktop.png",
     mask: [app.locator(".sidebar-bottom"), app.locator(".account-button")],
   });
+  if (boot.profile.id) {
+    await app.getByRole("button", { name: "消息", exact: true }).click();
+    for (const label of ["新闻回复", "圈子回复", "会话与通知", "新闻回复"]) {
+      await app.getByRole("tab", { name: label, exact: true }).click();
+      await app.waitForTimeout(500);
+      assert.equal(await app.locator(".message-page").count(), 1);
+    }
+    assert.deepEqual(runtimeErrors, []);
+    report.messageRendering = "actual reply payloads and repeated tab switching passed; read writes suppressed";
+  }
   await call("open_official", { kind: "feedback", id: null, query: null });
   let remote;
   for (let attempt = 0; attempt < 40; attempt++) {

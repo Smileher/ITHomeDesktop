@@ -97,7 +97,7 @@ export default function App() {
   const [profile, setProfile] = useState<Profile>({ id: 0, nick: "" });
   const [channel, setChannel] = useState("news");
   const [buildChannel, setBuildChannel] = useState("standalone");
-  const [version, setVersion] = useState("0.1.5");
+  const [version, setVersion] = useState("0.1.6");
   const [view, setView] = useState<View>("news");
   const [accountTab, setAccountTab] = useState<AccountTab>("home");
   const [userTarget, setUserTarget] = useState<{ id: number; name: string } | null>(null);
@@ -110,6 +110,12 @@ export default function App() {
   const [officialFavoriteIds, setOfficialFavoriteIds] = useState(new Set<number>());
   const [favoritesReady, setFavoritesReady] = useState(false);
   const [favoritesRefresh, setFavoritesRefresh] = useState(0);
+  const [unreadBadges, setUnreadBadges] = useState({ comments: 0, posts: 0, messages: 0 });
+  const [notificationStatus, setNotificationStatus] = useState("");
+  const [messageTab, setMessageTab] = useState<"conversations" | "news-replies" | "circle-replies">("conversations");
+  const markViewed = useCallback((kind: "news-replies" | "circle-replies" | "conversation") => {
+    setUnreadBadges((value) => ({ ...value, ...(kind === "news-replies" ? { comments: 0 } : kind === "circle-replies" ? { posts: 0 } : {}) }));
+  }, []);
   const [loading, setLoading] = useState(true);
   const [articleLoading, setArticleLoading] = useState(false);
   const [cloudSaving, setCloudSaving] = useState(false);
@@ -127,6 +133,10 @@ export default function App() {
   const syncInFlight = useRef(false);
   const [loginError, setLoginError] = useState("");
   const [commentsKey, setCommentsKey] = useState(0);
+  const [commentComposeRequest, setCommentComposeRequest] = useState({ id: 0, sequence: 0 });
+  const [inComments, setInComments] = useState(false);
+  const [liveCommentCount, setLiveCommentCount] = useState({ id: 0, count: 0 });
+  const updateCommentCount = useCallback((id: number, count: number) => setLiveCommentCount((old) => old.id === id && old.count === count ? old : { id, count }), []);
   const [image, setImage] = useState<{
     source: string;
     display: string;
@@ -157,6 +167,15 @@ export default function App() {
   const registerFlush = useCallback((value: () => Promise<void>) => {
     flush.current = value;
   }, []);
+  const notificationOpen = useRef<(target: string) => void>(() => {});
+  notificationOpen.current = (target) => {
+    if (/^news:\d+$/.test(target)) { void navigate("news").then(() => openArticle(Number(target.slice(5)))); }
+    else {
+      const tab = target.slice(9);
+      if (["conversations", "news-replies", "circle-replies"].includes(tab)) setMessageTab(tab as typeof messageTab);
+      void navigate("messages");
+    }
+  };
   const dark =
     settings.theme === "dark" || (settings.theme === "system" && systemDark);
   const showError = useCallback((text: string) => setError(text), []);
@@ -258,6 +277,34 @@ export default function App() {
     }).catch(() => { if (live) setStatus("黑名单暂未同步，可在账号中心重试"); });
     return () => { live = false; };
   }, [profile.id, blacklistKey]);
+  useEffect(() => {
+    if (!ready) return;
+    setUnreadBadges({ comments: 0, posts: 0, messages: 0 });
+    let live = true;
+    let busy = false;
+    const sync = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const value = await backend.noticeSync();
+        if (!live) return;
+        setUnreadBadges(value.badges);
+        setNotificationStatus(value.notificationError || (settingsRef.current.notificationsEnabled ? "运行期间约每两分钟同步；首次开启不推送历史内容" : "通知已关闭，未读红点仍会同步"));
+      } catch (e) { if (live) setNotificationStatus(errorText(e)); }
+      finally { busy = false; }
+    };
+    void sync();
+    const timer = setInterval(() => void sync(), 120_000);
+    window.addEventListener("focus", sync);
+    return () => { live = false; clearInterval(timer); window.removeEventListener("focus", sync); };
+  }, [ready, profile.id, settings.notificationsEnabled, settings.notifyNews, settings.notifyReplies, settings.notifyMessages]);
+  useEffect(() => {
+    if (!native) return;
+    const subscription = listen<string>("notification-open", (event) => {
+      notificationOpen.current(event.payload);
+    });
+    return () => { void subscription.then((unlisten) => unlisten()); };
+  }, []);
   useEffect(() => {
     const preventShortcuts = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
@@ -616,8 +663,8 @@ export default function App() {
   const articleForComments = useMemo(() => {
     if (!article) return null;
     const feedCount = items.find((item) => item.id === article.data.item.id)?.comments || 0;
-    return { ...article.data, item: { ...article.data.item, comments: Math.max(article.data.item.comments, feedCount) } };
-  }, [article, items]);
+    return { ...article.data, item: { ...article.data.item, comments: liveCommentCount.id === article.data.item.id ? liveCommentCount.count : Math.max(article.data.item.comments, feedCount) } };
+  }, [article, items, liveCommentCount]);
   const theme = useMemo(
     () => ({
       ...(dark ? webDarkTheme : webLightTheme),
@@ -733,7 +780,7 @@ export default function App() {
                 icon={item.icon}
                 onClick={() => { if (item.id === "circle") setCircleTarget(0); void navigate(item.id); }}
               >
-                {names[item.id]}
+                {names[item.id]}{item.id === "messages" && unreadBadges.messages > 0 && <i className="nav-unread-dot" aria-hidden="true" title={`${unreadBadges.messages} 条未读消息`} />}
               </Button>
             ))}
             <span className="nav-label">我的内容</span>
@@ -906,6 +953,8 @@ export default function App() {
               onConfirm={(title, action) => setConfirm({ title, action })}
               onBlacklistChanged={() => setBlacklistKey((value) => value + 1)}
               onFavoritesChanged={() => setFavoritesRefresh((value) => value + 1)}
+              unreadBadges={unreadBadges}
+              onRead={markViewed}
               onArticle={(id) => void navigate("news").then(() => openArticle(id))}
               onPost={(id) => { setCircleTarget(id); void navigate("circle"); }} />
           ) : view === "settings" ? (
@@ -920,9 +969,10 @@ export default function App() {
               profile={profile}
               onLogin={openLogin}
               onBlacklist={() => { setAccountTab("blacklist"); void navigate("profile"); }}
+              notificationStatus={notificationStatus}
             />
           ) : officialView ? (
-            <MessageCenter key={profile.id} profile={profile} onLogin={openLogin} onImage={showImage}
+            <MessageCenter key={profile.id} profile={profile} onLogin={openLogin} onImage={showImage} initialTab={messageTab} onRead={markViewed} readOnly={settings.readOnly}
               onArticle={(id) => void navigate("news").then(() => openArticle(id))}
               onPost={(id) => { setCircleTarget(id); void navigate("circle"); }} />
           ) : articleLoading ? (
@@ -955,7 +1005,8 @@ export default function App() {
                 <div className="reading-end"><span></span>读到这里，也来聊聊你的看法<span></span></div>
                 <Comments key={article.data.item.id} article={articleForComments!} profile={profile}
                   refreshKey={commentsKey} onLogin={openLogin} onError={showError} onImage={showImage}
-                  registerFlush={registerFlush} readOnly={settings.readOnly} blockedIds={blockedIds} showComposer={settings.showCommentComposer} />
+                  registerFlush={registerFlush} readOnly={settings.readOnly} blockedIds={blockedIds} showComposer={settings.showCommentComposer}
+                  composeRequest={commentComposeRequest.id === article.data.item.id ? commentComposeRequest.sequence : 0} onInCommentsChange={setInComments} onCountChange={updateCommentCount} />
               </article>
               <div className="article-toolbar">
                 <Tooltip content={focused ? "恢复列表" : "专注阅读"} relationship="label">
@@ -974,9 +1025,9 @@ export default function App() {
                   <Button appearance="subtle" icon={<ArrowUpRightRegular />} onClick={() => void backend.official("article", article.data.item.id).catch((e) => setError(errorText(e)))} />
                 </Tooltip>
                 <span className="toolbar-spacer" />
-                <Tooltip content="查看评论" relationship="label">
-                  <Button className="toolbar-comment" appearance="subtle" icon={<CommentRegular />}
-                    onClick={() => document.querySelector(".comments")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+                <Tooltip content={inComments ? "写评论" : "查看评论"} relationship="label">
+                  <Button className="toolbar-comment" appearance="subtle" icon={<CommentRegular />} aria-label={inComments ? "写评论" : "查看评论"}
+                    onClick={() => inComments ? setCommentComposeRequest((value) => ({ id: article.data.item.id, sequence: value.sequence + 1 })) : document.querySelector(".comments")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
                     <span className="comment-count">{articleForComments?.item.comments || 0}</span>
                   </Button>
                 </Tooltip>

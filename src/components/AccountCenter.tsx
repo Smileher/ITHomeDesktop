@@ -51,6 +51,8 @@ export default function AccountCenter({
   onConfirm,
   onBlacklistChanged,
   onFavoritesChanged,
+  unreadBadges,
+  onRead,
 }: {
   profile: Profile;
   tab: AccountTab;
@@ -64,6 +66,8 @@ export default function AccountCenter({
   onConfirm: (title: string, action: () => Promise<void>) => void;
   onBlacklistChanged: () => void;
   onFavoritesChanged: () => void;
+  unreadBadges?: { comments: number; posts: number };
+  onRead?: (kind: "news-replies" | "circle-replies") => void;
 }) {
   const [rows, setRows] = useState<AccountRow[]>([]);
   const [page, setPage] = useState(1);
@@ -90,6 +94,10 @@ export default function AccountCenter({
             );
       if (token !== generation.current) return;
       const incoming = accountRows(tab, data);
+      const kind = tab === "comments" ? "news-replies" : tab === "posts" ? "circle-replies" : null;
+      if (kind && !readOnly && !append) {
+        void backend.messageRead(kind).then(() => { if (token === generation.current) onRead?.(kind); }).catch((e) => { if (token === generation.current) setError(`内容已读取，${errorText(e)}`); });
+      }
       setRows((current) =>
         append
           ? [
@@ -175,7 +183,7 @@ export default function AccountCenter({
           aria-pressed={tab === "comments"}
           onClick={() => onTab("comments")}
         >
-          评论
+          评论{(unreadBadges?.comments || 0) > 0 && <i className="shortcut-unread-dot" aria-hidden="true" title={`${unreadBadges!.comments} 条未读评论`} />}
         </Button>
         <Button
           appearance="subtle"
@@ -183,7 +191,7 @@ export default function AccountCenter({
           aria-pressed={tab === "posts"}
           onClick={() => onTab("posts")}
         >
-          帖子
+          帖子{(unreadBadges?.posts || 0) > 0 && <i className="shortcut-unread-dot" aria-hidden="true" title={`${unreadBadges!.posts} 条未读帖子`} />}
         </Button>
         <Button
           appearance="subtle"

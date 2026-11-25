@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button } from "@fluentui/react-components";
-import { ArrowDownloadRegular, ArrowUpRightRegular, CheckmarkCircleRegular, ColorRegular, TextFontRegular, PersonRegular, StorageRegular, InfoRegular } from "@fluentui/react-icons";
+import { ArrowDownloadRegular, ArrowUpRightRegular, CheckmarkCircleRegular, ColorRegular, TextFontRegular, PersonRegular, StorageRegular, InfoRegular, TagRegular, AlertRegular } from "@fluentui/react-icons";
 import { backend } from "../bridge";
 import { bytesLabel, errorText } from "../domain";
 import type { Profile, Settings, Stats } from "../types";
@@ -8,19 +8,33 @@ import appLogo from "../assets/app.svg";
 
 const categories = [
   ["appearance", "外观", ColorRegular], ["reading", "阅读", TextFontRegular],
-  ["account", "账号", PersonRegular], ["storage", "存储", StorageRegular], ["about", "关于", InfoRegular],
+  ["account", "账号", PersonRegular], ["notifications", "通知", AlertRegular], ["storage", "存储", StorageRegular], ["about", "关于", InfoRegular],
 ] as const;
 type Category = typeof categories[number][0];
-export default function SettingsView({ settings, channel, version, onChange, onReset, onError, onConfirm, profile, onLogin, onBlacklist }: {
+export default function SettingsView({ settings, channel, version, onChange, onReset, onError, onConfirm, profile, onLogin, onBlacklist, notificationStatus }: {
   settings: Settings; channel: string; version: string;
   onChange: (patch: Partial<Settings>) => void; onReset: () => Promise<void>;
   onError: (text: string) => void; onConfirm: (title: string, action: () => Promise<void>) => void;
   profile: Profile; onLogin: () => void; onBlacklist: () => void;
+  notificationStatus?: string;
 }) {
   const [category, setCategory] = useState<Category>("appearance");
   const [stats, setStats] = useState<Stats | null>(null);
+  const [tailPreview, setTailPreview] = useState("正在读取官方预览…");
+  const [detectedModel, setDetectedModel] = useState("");
   const reload = () => { void backend.stats().then(setStats).catch((error) => onError(errorText(error))); };
   useEffect(reload, []);
+  useEffect(() => {
+    if (category !== "account") return;
+    let live = true;
+    void backend.deviceTail(settings.deviceTailMode).then((value) => {
+      if (!live) return;
+      const name = value.official.deviceName || "官方服务未返回机型";
+      setDetectedModel(value.detectedModel || "");
+      setTailPreview(settings.deviceTailMode === "official" ? "服务端自动识别（未指定机型）" : name);
+    }).catch((e) => { if (live) setTailPreview(errorText(e)); });
+    return () => { live = false; };
+  }, [category, settings.deviceTailMode]);
   const clear = async (kind: "cache" | "history" | "draft") => { await backend.clear(kind); reload(); };
   function toggle(key: keyof Settings, title: string, description: string) {
     return <div className="setting-row" key={key}><div><strong>{title}</strong><p>{description}</p></div>
@@ -75,7 +89,20 @@ export default function SettingsView({ settings, channel, version, onChange, onR
             {toggle("rememberLogin", "保持登录", "在本机加密保存授权；关闭后仅保留本次会话")}
             {toggle("validateSessionOnStart", "启动时验证登录状态", "网络异常时保留本地授权")}
             {toggle("readOnly", "只读模式", "禁用评论、点赞、收藏和屏蔽等写入操作")}
+            <div className="setting-row tail-setting-row"><div><strong><TagRegular /> 机型小尾巴</strong><p>官方服务预览；最终显示以发布后的官方结果为准</p></div><span className="tail-preview-chip">{tailPreview}</span></div>
+            <div className="setting-row"><div><strong>尾巴模式</strong><p>{detectedModel ? `识别型号：${detectedModel}；选择后随评论和帖子发送` : "仅提供 Windows 标识及真实识别的本机型号"}</p></div><select className="setting-select" aria-label="尾巴模式" value={settings.deviceTailMode} onChange={(event) => onChange({ deviceTailMode: event.target.value as Settings["deviceTailMode"] })}><option value="official">跟随官方默认</option><option value="windows">Windows 客户端</option><option value="detected">识别本机型号</option></select></div>
           </div>
+        </>}
+        {category === "notifications" && <>
+          <p className="settings-description">同步官方推送内容与未读消息，使用 Windows 图文通知。</p>
+          <div className="setting-group">
+            {toggle("notificationsEnabled", "通知总开关", "程序运行期间约每两分钟同步；退出程序后停止。首次开启只记录当前内容，避免历史通知刷屏")}
+            {toggle("notifyNews", "官方热点推送", "读取官方当日已推送新闻，通知包含标题、摘要及可用图片")}
+            {toggle("notifyReplies", "评论与帖子回复", "官方未读数增加时，提示最新回复；正文可能显示在 Windows 通知中心")}
+            {toggle("notifyMessages", "会话与系统消息", "有新未读时提示；默认只提示有新消息，点击后查看内容")}
+            <div className="setting-row"><div><strong>测试图文通知</strong><p>{notificationStatus || "以 Windows 系统通知权限及免打扰设置为准"}；测试仅发送一条固定示例，不改变总开关</p></div><Button onClick={() => void backend.testNotification().catch((e) => onError(errorText(e)))}>发送测试通知</Button></div>
+          </div>
+          <p className="about-note">此功能同步官方已推送列表，不接管官方 Android/iOS 推送凭据。通知可在 Windows 通知中心保留；图片不可用时显示文字。</p>
         </>}
         {category === "storage" && <>
           <p className="settings-description">可下载内容与本机记录分别管理。</p>

@@ -416,8 +416,13 @@ impl Api {
             return Err(AppError::new("forbidden", "该文章已关闭评论"));
         }
         let url = Url::parse("https://cmt.ithome.com/apiv2/comment/submit").unwrap();
-        // Follow the official web payload; omit client/device fields so the server chooses the source tail.
-        let response=self.client.post(url.clone()).header(COOKIE,self.auth.cookie_header(&url)?).header(REFERER,canonical_url(id)).json(&json!({"newsId":id.to_string(),"elements":[{"type":0,"content":body}],"replyCommentId":reply})).send().await.map_err(|_|AppError::new("uncertain","发送结果待确认，请先刷新评论核对；草稿已保留，不会自动重发"))?;
+        let mut payload = json!({"newsId":id.to_string(),"elements":[{"type":0,"content":body}],"replyCommentId":reply});
+        if let Some(device) = crate::desktop::tail_device(&self.store.settings()?.device_tail_mode)? {
+            payload["device"] = json!(device);
+            payload["client"] = json!(10);
+            payload["ver"] = json!("900");
+        }
+        let response=self.client.post(url.clone()).header(COOKIE,self.auth.cookie_header(&url)?).header(REFERER,canonical_url(id)).json(&payload).send().await.map_err(|_|AppError::new("uncertain","发送结果待确认，请先刷新评论核对；草稿已保留，不会自动重发"))?;
         let response = check(response)?;
         let data: Value = response.json().await.map_err(|_| {
             AppError::new("uncertain", "发送结果无法解析，请刷新评论核对；草稿已保留")
@@ -428,7 +433,9 @@ impl Api {
         }
         Ok(data)
     }
-    pub async fn vote(&self, id: u64, cancel: bool) -> Result<Value> {
+    pub async fn vote(&self, id: u64, cancel: bool, vote_type: u8) -> Result<Value> {
+        validate_id(id)?;
+        if ![1, 2].contains(&vote_type) { return Err(AppError::new("validation", "投票类型无效")); }
         let _write = self.writes.lock().await;
         if self.store.settings()?.read_only { return Err(AppError::new("readonly", "只读模式已开启，请在设置中关闭后操作")); }
         if self.auth.profile()?.id == 0 {
@@ -438,7 +445,7 @@ impl Api {
         let action = if cancel { "cancelvote" } else { "vote" };
         let data: Value = self
             .get(&format!(
-                "https://cmt.ithome.com/api/comment/{action}?commentid={id}&typeid=1"
+                "https://cmt.ithome.com/api/comment/{action}?commentid={id}&typeid={vote_type}"
             ))
             .await?
             .json()

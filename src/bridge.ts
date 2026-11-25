@@ -52,6 +52,22 @@ function cached<T>(data: T): Cached<T> {
   return { data, savedAt: Date.now() / 1000, stale: false };
 }
 export const backend = {
+  async badges(): Promise<{ comments: number; posts: number; messages: number }> {
+    return native ? invoke("badge_counts") : { comments: 0, posts: 0, messages: 0 };
+  },
+  async noticeSync(): Promise<{ badges: { comments: number; posts: number; messages: number }; notificationError: string }> {
+    const now = new Date();
+    const date = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+    return native ? invoke("notice_sync", { date }) : { badges: { comments: 0, posts: 0, messages: 0 }, notificationError: "" };
+  },
+  async testNotification(): Promise<void> {
+    if (!native) throw new Error("请在桌面客户端测试 Windows 通知");
+    return invoke("test_notification");
+  },
+  async messageRead(kind: "news-replies" | "circle-replies" | "conversation", id = 0): Promise<void> {
+    if (!native) return;
+    return invoke("message_read", { kind, id });
+  },
   async messages<T>(kind: "conversations" | "unread" | "conversation" | "news-replies" | "circle-replies", id = 0, page = 1, cursor = 0, stamp = ""): Promise<T> {
     if (!native) throw new Error("请在桌面客户端登录后查看消息");
     return invoke("message_data", { kind, id, page, cursor, stamp });
@@ -59,6 +75,10 @@ export const backend = {
   async circleAction(kind: "post" | "reply" | "vote-post" | "vote-comment" | "favorite", id: number, reply = 0, topic = 0, body = "", enabled = true): Promise<Record<string, unknown>> {
     if (!native) throw new Error("请在桌面客户端登录后操作");
     return invoke("circle_action", { kind, id, reply, topic, body, enabled });
+  },
+  async deviceTail(mode: Settings["deviceTailMode"] = "official"): Promise<{ official: { deviceName?: string }; detectedModel?: string; submittedDevice?: string }> {
+    if (!native) throw new Error("请在桌面客户端读取官方机型小尾巴");
+    return invoke("device_tail", { mode });
   },
   async circleDraft(id: number, reply: number, topic: number): Promise<string> {
     if (!native) return "";
@@ -91,7 +111,7 @@ export const backend = {
           settings: { ...defaultSettings, ...(localPreview().settings as Partial<Settings>) },
           profile: { id: 0, nick: "" },
           channel: "preview",
-          version: "0.1.5",
+          version: "0.1.6",
           warnings: [],
         };
   },
@@ -255,9 +275,9 @@ export const backend = {
     if (!native) throw new Error("请在桌面客户端登录后评论");
     return invoke("submit_comment", { id, reply, body });
   },
-  async vote(id: number, cancel: boolean): Promise<Raw> {
+  async vote(id: number, cancel: boolean, type = 1): Promise<Raw> {
     if (!native) throw new Error("请在桌面客户端登录后操作");
-    return invoke("vote_comment", { id, cancel });
+    return invoke("vote_comment", { id, cancel, type });
   },
   async search(keyword: string): Promise<NewsItem[]> {
     if (!native) throw new Error("全站搜索需要在桌面客户端登录");

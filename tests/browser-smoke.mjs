@@ -74,11 +74,11 @@ try {
   });
   await page.locator(".comments").waitFor();
   assert.equal(await page.getByRole("textbox", { name: "评论草稿" }).count(), 0);
+  await page.waitForFunction(() => document.querySelector(".toolbar-comment")?.getAttribute("aria-label") === "写评论");
   await page.locator(".toolbar-comment").click();
+  await page.getByRole("dialog", { name: "登录 IT之家账号" }).waitFor();
   assert.equal(await page.getByRole("textbox", { name: "评论草稿" }).count(), 0);
-  await page.locator(".comments").getByRole("button", { name: "写评论", exact: true }).click();
-  await page.getByRole("textbox", { name: "评论草稿" }).waitFor();
-  await page.getByRole("button", { name: "暂存并关闭", exact: true }).click();
+  await page.getByRole("button", { name: "取消", exact: true }).click();
   await page.getByRole("button", { name: "我的", exact: true }).click();
   await page.locator(".mobile-account-links").waitFor();
   await page
@@ -199,47 +199,18 @@ try {
   await page
     .getByRole("heading", { name: "自动化测试：文章与评论的状态恢复" })
     .waitFor();
-  await page.locator(".toolbar-comment").click();
   await page.locator(".comments").getByRole("button", { name: "写评论", exact: true }).click();
-  await page
-    .getByRole("textbox", { name: "评论草稿" })
-    .fill("测试草稿：切换之后继续写。");
-  await page.getByText("草稿已保存", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "暂存并关闭", exact: true }).click();
+  await page.getByRole("dialog", { name: "登录 IT之家账号" }).waitFor();
+  assert.equal(await page.getByRole("textbox", { name: "评论草稿" }).count(), 0);
+  await page.getByRole("button", { name: "取消", exact: true }).click();
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("switch", { name: "紧凑列表" }).click();
   await page.getByText("设置已保存", { exact: true }).waitFor();
   await page.getByRole("button", { name: "资讯", exact: true }).click();
-  await page.locator(".toolbar-comment").click();
-  await page.locator(".comments").getByRole("button", { name: "写评论", exact: true }).click();
-  await page.getByRole("textbox", { name: "评论草稿" }).waitFor();
-  assert.equal(
-    await page.getByRole("textbox", { name: "评论草稿" }).inputValue(),
-    "测试草稿：切换之后继续写。",
-  );
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await page.locator(".toolbar-comment").click();
-  await page.locator(".comments").getByRole("button", { name: "写评论", exact: true }).click();
-  await page.getByRole("textbox", { name: "评论草稿" }).waitFor();
-  await page.waitForFunction(
-    () =>
-      document.querySelector("textarea")?.value ===
-      "测试草稿：切换之后继续写。",
-  );
+  await page.locator(".reader").waitFor();
   assert.equal(await page.evaluate(() => window.badScriptRan), undefined);
   assert.equal(await page.locator(".article-body script").count(), 0);
   assert.equal(await page.getByRole("button", { name: "本机收藏", exact: true }).count(), 0);
-  await page.getByRole("button", { name: "登录后评论", exact: true }).click();
-  await page.getByRole("dialog", { name: "登录 IT之家账号" }).waitFor();
-  assert.equal(
-    await page
-      .getByRole("button", { name: "同步登录", exact: true })
-      .isEnabled(),
-    false,
-  );
-  await page.getByRole("button", { name: "取消", exact: true }).click();
-  const closeComposer = page.getByRole("button", { name: "暂存并关闭", exact: true });
-  if (await closeComposer.isVisible()) await closeComposer.click();
   assert.equal(
     await page.locator(".comment-device-tail").first().innerText(),
     "ThinkBook 14",
@@ -254,8 +225,7 @@ try {
   await page.waitForTimeout(400);
   assert.equal(await page.locator(".image-dialog").count(), 0);
   report.fixtures = {
-    draftSwitch: "pass",
-    draftRestart: "pass",
+    unauthenticatedComposerBlocked: "pass",
     localFavoriteRemoved: "pass",
     settings: "pass",
     htmlSanitization: "pass",
